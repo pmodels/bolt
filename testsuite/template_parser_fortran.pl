@@ -16,6 +16,8 @@
 
 # Using Getopt::long to extract the programm options
 use Getopt::Long;
+# Add root directory
+use lib '.';
 # Using functions: Set of subroutines to modify the testcode
 use ompts_parserFunctions;
 

@@ -25,6 +25,9 @@ $debug_mode     = 0;
 use Getopt::Long;
 #use Unix::PID;
 use Data::Dumper;
+
+# Add root directory
+use lib '.';
 use ompts_parserFunctions;
 
 # Extracting given options
