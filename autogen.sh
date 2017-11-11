@@ -47,7 +47,7 @@ echo_n() {
 ########################################################################
 
 # Update the below when releasing a new version
-BOLT_VERSION=1.0a1
+BOLT_VERSION=1.0b1
 
 # Produce a numeric version assuming the following format:
 # Version: [MAJ].[MIN].[REV][EXT][EXT_NUMBER]

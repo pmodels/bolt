@@ -1,5 +1,13 @@
 ===============================================================================
-                               Changes in 1.0
+                               Changes in 1.0b1
+===============================================================================
+
+- Fixed missing some global state initialization
+- Fixed bugs related to newer Perl versions
+- Updated the embedded Argobots version
+
+===============================================================================
+                               Changes in 1.0a1
 ===============================================================================
 
 # The first release of BOLT, which uses Argobots as a threading layer.
