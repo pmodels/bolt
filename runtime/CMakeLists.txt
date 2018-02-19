@@ -149,16 +149,6 @@ set(LIBOMP_USE_HWLOC FALSE CACHE BOOL
 set(LIBOMP_HWLOC_INSTALL_DIR /usr/local CACHE PATH
   "Install path for hwloc library")
 
-# Argobots-support
-set(LIBOMP_USE_ARGOBOTS FALSE CACHE BOOL
-  "Use Argobots (http://www.argobots.org) as threading model?")
-if(${LIBOMP_USE_BUILTIN_ARGOBOTS})
-  set(LIBOMP_ARGOBOTS_INSTALL_DIR ${CMAKE_INSTALL_PREFIX})
-else()
-  set(LIBOMP_ARGOBOTS_INSTALL_DIR /usr/local CACHE PATH
-    "Install path for Argobots")
-endif()
-
 # Get the build number from kmp_version.c
 libomp_get_build_number("${CMAKE_CURRENT_SOURCE_DIR}" LIBOMP_VERSION_BUILD)
 math(EXPR LIBOMP_VERSION_BUILD_YEAR "${LIBOMP_VERSION_BUILD}/10000")
@@ -211,8 +201,7 @@ elseif("${libomp_build_type_lowercase}" STREQUAL "minsizerel")
 endif()
 
 # Include itt notify interface? Right now, always.
-# BOLT: we should not include itt notify interface for now.
-set(LIBOMP_USE_ITT_NOTIFY TRUE CACHE BOOL "Include itt notify interface?")
+set(LIBOMP_USE_ITT_NOTIFY TRUE)
 
 # normal, profile, stubs library.
 set(NORMAL_LIBRARY FALSE)
@@ -322,11 +311,6 @@ if(LIBOMP_USE_HWLOC AND (NOT LIBOMP_HAVE_HWLOC))
   libomp_error_say("Hwloc requested but not available")
 endif()
 
-# Error check Argobots support after config-ix has run
-if(LIBOMP_USE_ARGOBOTS AND (NOT LIBOMP_HAVE_ARGOBOTS))
-  libomp_error_say("Argobots requested but not available")
-endif()
-
 # Setting final library name
 set(LIBOMP_DEFAULT_LIB_NAME libomp)
 if(${PROFILE_LIBRARY})
@@ -348,26 +332,6 @@ else()
 endif()
 
 set(LIBOMP_LIB_FILE ${LIBOMP_LIB_NAME}${LIBOMP_LIBRARY_SUFFIX})
-
-# Set BOLT version, release date, and build information
-set(BOLT_VERSION %BOLT_VERSION%)
-set(BOLT_NUMVERSION %BOLT_NUMVERSION%)
-set(BOLT_RELEASE_DATE %BOLT_RELEASE_DATE%)
-set(BOLT_COMPILER_CC ${CMAKE_C_COMPILER})
-set(BOLT_COMPILER_CXX ${CMAKE_CXX_COMPILER})
-if("${libomp_build_type_lowercase}" STREQUAL "release")
-  set(BOLT_COMPILER_CFLAGS ${CMAKE_C_FLAGS_RELEASE})
-  set(BOLT_COMPILER_CXXFLAGS ${CMAKE_CXX_FLAGS_RELEASE})
-elseif("${libomp_build_type_lowercase}" STREQUAL "debug")
-  set(BOLT_COMPILER_CFLAGS ${CMAKE_C_FLAGS_DEBUG})
-  set(BOLT_COMPILER_CXXFLAGS ${CMAKE_CXX_FLAGS_DEBUG})
-elseif("${libomp_build_type_lowercase}" STREQUAL "relwithdebinfo")
-  set(BOLT_COMPILER_CFLAGS ${CMAKE_C_FLAGS_RELWITHDEBINFO})
-  set(BOLT_COMPILER_CXXFLAGS ${CMAKE_CXX_FLAGS_RELWITHDEBINFO})
-elseif("${libomp_build_type_lowercase}" STREQUAL "minsizerel")
-  set(BOLT_COMPILER_CFLAGS ${CMAKE_C_FLAGS_RELEASE})
-  set(BOLT_COMPILER_CXXFLAGS ${CMAKE_CXX_FLAGS_RELEASE})
-endif()
 
 # Print configuration after all variables are set.
 if(${LIBOMP_STANDALONE_BUILD})
@@ -398,9 +362,6 @@ if(${LIBOMP_STANDALONE_BUILD})
   libomp_say("Use Adaptive locks   -- ${LIBOMP_USE_ADAPTIVE_LOCKS}")
   libomp_say("Use quad precision   -- ${LIBOMP_USE_QUAD_PRECISION}")
   libomp_say("Use Hwloc library    -- ${LIBOMP_USE_HWLOC}")
-  libomp_say("Use Argobots         -- ${LIBOMP_USE_ARGOBOTS}")
-  libomp_say("Use builtin Argobots -- ${LIBOMP_USE_BUILTIN_ARGOBOTS}")
-  libomp_say("Argobots path        -- ${LIBOMP_ARGOBOTS_INSTALL_DIR}")
 endif()
 
 add_subdirectory(src)

@@ -12,7 +12,7 @@
 
 
 /* Utility function do spend some time in a loop */
-int <ompts:testcode:functionname>omp_task_shared</ompts:testcode:functionname> (FILE * logFile)
+int <ompts:testcode:functionname>omp_task_imp_shared</ompts:testcode:functionname> (FILE * logFile)
 {
    <ompts:orphan:vars>
     int i;

@@ -25,9 +25,6 @@ $debug_mode     = 0;
 use Getopt::Long;
 #use Unix::PID;
 use Data::Dumper;
-
-# Add root directory
-use lib '.';
 use ompts_parserFunctions;
 
 # Extracting given options
@@ -41,8 +38,7 @@ GetOptions("help",
       "compile!",
       "run!",
       "orphan!",
-      "resultfile=s",
-      "junitfile=s"
+      "resultfile=s"
       );
 
 # Get global configuratino options from config file:
@@ -64,7 +60,6 @@ if (!defined($opt_compile)) {$opt_compile = 1;}
 if (!defined($opt_run))     {$opt_run = 1;}
 if (!defined($opt_orphan)) {$opt_orphan = 1;}
 if (!defined($opt_resultsfile)) {($opt_resultsfile) = get_tag_values("resultsfile", $config);}
-if (!defined($opt_junitfile)) {($opt_junitfile) = get_tag_values("junitfile", $config);}
 if ( defined($opt_numthreads) && ($opt_numthreads > 0)) {$numthreads = $opt_numthreads;}
 if ($debug_mode) {
 print <<EOF;
@@ -75,7 +70,6 @@ Language:  $opt_lang
 Display errors:   $display_errors
 Display warnings: $display_warnings
 Resultsfile:      $opt_resultsfile
-Junitfile:        $opt_junitfile
 Numthreads: $numthreads
 ------------------------------
 EOF
@@ -99,30 +93,6 @@ $num_orphaned_tests_compile_error = 0;
 $num_orphaned_tests_timed_out = 0;
 $num_orphaned_tests_successful = 0;
 $num_orphaned_tests_verified = 0;
-
-$junit_num_tests = 0;
-$junit_num_failed_tests = 0;
-$junit_num_error_tests = 0;
-$junit_num_skipped_tests = 0;
-
-@junit_xfail_list_c;
-@junit_xfail_list_fortran;
-$xfail_file = "xfaillist-$opt_lang.txt";
-if (-e $xfail_file) {
-    open (XFAIL, "<$xfail_file") or error ("Could not open file '$xfail_file'", 1);
-    if ($opt_lang eq 'c') {
-        while ( <XFAIL> ) {
-            chomp($_);
-            push @junit_xfail_list_c, $_;
-        }
-    } elsif ($opt_lang eq 'fortran') {
-        while ( <XFAIL> ) {
-            chomp($_);
-            push @junit_xfail_list_fortran, $_;
-        }
-    }
-    close (XFAIL);
-}
 
 if ($opt_help)         { print_help_text ();   exit 0; }
 if ($opt_listlanguages){ print_avail_langs (); exit 0; }
@@ -173,32 +143,6 @@ O Number of successful tests:          $num_orphaned_tests_successful
 O + from this were verified:           $num_orphaned_tests_verified
 EOF
 
-    # junit output
-    open (JUNITOUT, ">$opt_junitfile.new") or error ("Could not open file '$opt_junitfile.new' to write results.", 1);
-
-    $date = `date "+%Y-%m-%d-%H-%M"`;
-    $date =~ s/\r?\n//;
-    print JUNITOUT "<testsuites>\n";
-    print JUNITOUT "  <testsuite name=\"bolt testsuite\"\n";
-    print JUNITOUT "             tests=\"$junit_num_tests\"\n";
-    print JUNITOUT "             failures=\"$junit_num_failed_tests\"\n";
-    print JUNITOUT "             errors=\"$junit_num_error_tests\"\n";
-    print JUNITOUT "             skipped=\"$junit_num_skipped_tests\"\n";
-    print JUNITOUT "             timestamp=\"$date\">\n";
-
-    open (JUNITIN, "<$opt_junitfile") or error ("Could not open file '$opt_junitfile' to write results.", 1);
-    while ( <JUNITIN> ) {
-        print JUNITOUT $_;
-    }
-    close (JUNITIN);
-
-    print JUNITOUT "    <system-out></system-out>\n";
-    print JUNITOUT "    <system-err></system-err>\n";
-    print JUNITOUT "  </testsuite>\n";
-    print JUNITOUT "</testsuites>\n";
-    close (JUNITOUT);
-
-    system("mv -f $opt_junitfile.new $opt_junitfile");
 }
 
 # Function that executest the tests specified in the given list
@@ -418,68 +362,6 @@ sub write_result_file_head
     open (RESULTS, ">$opt_resultsfile") or error ("Could not open file '$opt_resultsfile' to write results.", 1);
     $resultline = sprintf "%-25s %-s\n", "#Tested Directive", "\tt\tct\tot\toct";
     print RESULTS $resultline;
-
-    open (JUNIT, ">$opt_junitfile") or error ("Could not open file '$opt_junitfile' to write results.", 1);
-    print JUNIT "";
-    close (JUNIT);
-}
-
-sub add_log_to_junitfile
-{
-    my ($JUNIT, $logfile) = @_;
-
-    if (-e $logfile) {
-        open(TLOG, "<$logfile") || die "cannot open $logfile";
-        while ($_ = <TLOG>) {
-            print $JUNIT $_;
-        }
-        close(TLOG);
-    } else {
-        print $JUNIT "$logfile does not exist!\n";
-    }
-}
-
-sub add_result_to_junitfile
-{
-    my ($JUNIT, $num, $exec_name, $result) = @_;
-
-    if ($opt_lang eq 'c') {
-        if ( grep(/^$exec_name$/, @junit_xfail_list_c) ) {
-            $result = 'xfail';
-        }
-    } elsif ($opt_lang eq 'fortran') {
-        if ( grep(/^$exec_name$/, @junit_xfail_list_fortran) ) {
-            $result = 'xfail';
-        }
-    }
-
-    print $JUNIT "    <testcase name=\"$num - ./$exec_name\">\n";
-	if ($result eq 'ce') {
-        print $JUNIT "      <error type=\"TestError\" ";
-        print $JUNIT "message=\"compilation error $num - ./$exec_name\">";
-        print $JUNIT "<![CDATA[";
-        $logfile = "bin/$opt_lang/$exec_name\_compile.log";
-        add_log_to_junitfile($JUNIT, $logfile);
-        print $JUNIT "]]></error>\n";
-        $junit_num_error_tests++;
-    } elsif ($result eq 'skip') {
-        print $JUNIT "      <skipped type=\"TestSkipped\" ";
-        print $JUNIT "message=\"test skipped\"></skipped>\n";
-        $junit_num_skipped_tests++;
-    } elsif ($result eq 'xfail') {
-        print $JUNIT "      <skipped type=\"TestXfailed\" ";
-        print $JUNIT "message=\"test skipped\"></skipped>\n";
-        $junit_num_skipped_tests++;
-    } elsif ($result != 100) {
-        print $JUNIT "      <failure type=\"TestFailed\" ";
-        print $JUNIT "message=\"failed $num - ./$exec_name\">";
-        print $JUNIT "<![CDATA[";
-        $logfile = "bin/$opt_lang/$exec_name.log";
-        add_log_to_junitfile($JUNIT, $logfile);
-        print $JUNIT "]]></failure>\n";
-        $junit_num_failed_tests++;
-    }
-    print $JUNIT "    </testcase>\n";
 }
 
 # Function which adds a result to the list of results
@@ -548,37 +430,6 @@ sub add_result
 
     $resultline2 = sprintf "%-25s %-s", "$testname", "\t$resultline";
     print RESULTS $resultline2;
-
-    # junit output
-    open (JUNIT, ">>$opt_junitfile") or error ("Could not open file '$opt_junitfile' to write results.", 1);
-
-    $junit_num_tests++;
-    $exec_name = "test_$testname";
-    add_result_to_junitfile(JUNIT, $junit_num_tests, $exec_name, ${$result}[0][2]{test});
-
-    $junit_num_tests++;
-    $exec_name = "ctest_$testname";
-    if (${$result}[0][2]{test} == 100) {
-        $test_result = ${$result}[0][2]{crosstest};
-    } else {
-        $test_result = "skip";
-    }
-    add_result_to_junitfile(JUNIT, $junit_num_tests, $exec_name, $test_result);
-
-    $junit_num_tests++;
-    $exec_name = "orph_test_$testname";
-    add_result_to_junitfile(JUNIT, $junit_num_tests, $exec_name, ${$result}[1][2]{test});
-
-    $junit_num_tests++;
-    $exec_name = "orph_ctest_$testname";
-    if (${$result}[1][2]{test} == 100) {
-        $test_result = ${$result}[1][2]{crosstest};
-    } else {
-        $test_result = "skip";
-    }
-    add_result_to_junitfile(JUNIT, $junit_num_tests, $exec_name, $test_result);
-
-    close (JUNIT);
 }
 
 # Function which executes a single test
@@ -700,7 +551,6 @@ Options:
   --norun           do not run tests
   --noorphan        switch of orphaned tests
   --resultfile=NAME use NAME as resultfile (overwrites config file settings)
-  --junitfile=NAME  use NAME as junitfile (overwrites config file settings)
 EOF
 }
 

@@ -27,7 +27,7 @@
 #include "omp_testsuite.h"
 #include "omp_my_sleep.h"
 
-//#define NUMBER_OF_THREADS 10
+#define NUMBER_OF_THREADS 10
 #define CFSMAX_SIZE 1000
 #define MAX_TIME  0.005
 
@@ -44,7 +44,7 @@ int <ompts:testcode:functionname>omp_for_schedule_guided</ompts:testcode:functio
 	int notout;
 	int maxiter;
     </ompts:orphan:vars>
-    int NUMBER_OF_THREADS;
+
     int threads;
     int i;
     int result;
@@ -60,7 +60,6 @@ int <ompts:testcode:functionname>omp_for_schedule_guided</ompts:testcode:functio
 #pragma omp single
 	  {
 		threads = omp_get_num_threads ();
-		NUMBER_OF_THREADS = threads;
 	  } /* end of single */
 	} /* end of parallel */
 

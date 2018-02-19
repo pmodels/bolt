@@ -39,10 +39,6 @@
 
         use omp_lib_kinds
 
-        character(*), parameter :: bolt_version = '@BOLT_VERSION@'
-        integer (kind=omp_integer_kind), parameter :: bolt_numversion = @BOLT_NUMVERSION@
-        character(*), parameter :: bolt_release_date = '@BOLT_RELEASE_DATE@'
-
         integer (kind=omp_integer_kind), parameter :: kmp_version_major = @LIBOMP_VERSION_MAJOR@
         integer (kind=omp_integer_kind), parameter :: kmp_version_minor = @LIBOMP_VERSION_MINOR@
         integer (kind=omp_integer_kind), parameter :: kmp_version_build = @LIBOMP_VERSION_BUILD@
