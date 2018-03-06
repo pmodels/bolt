@@ -2125,19 +2125,23 @@ void __kmpc_end_taskgroup(ident_t *loc, int gtid) {
 #endif
     {
 #if KMP_USE_ABT
-      while (TCR_4(taskgroup->count) != 0) {
-        __kmp_abt_release_info(thread);
-
-        ABT_thread_yield();
-
-        if (taskdata->td_flags.tiedness) {
-         __kmp_abt_acquire_info_for_task(thread, taskdata);
-        } else {
-         __kmp_abt_bind_task_to_thread(thread->th.th_team, taskdata);
-        }
-      }
-      //__kmp_abt_wait_child_tasks(thread, 1);
-      KMP_DEBUG_ASSERT(TCR_4(taskgroup->count) == 0);
+      // while (TCR_4(taskgroup->count) != 0) {
+      //   __kmp_abt_release_info(thread);
+      //   ABT_thread_yield();
+      //   if (taskdata->td_flags.tiedness) {
+      //     __kmp_abt_acquire_info_for_task(thread, taskdata);
+      //   } else {
+      //     __kmp_abt_bind_task_to_thread(thread->th.th_team, taskdata);
+      //   }
+      // }
+      __kmp_abt_wait_child_tasks(thread, 0);
+      // Since BOLT manages tasks by task queue owned by every task,
+      // taskgroup->count is not modified at the end of tasks.
+      // FIXME: it assumes parent-child relationship between parent tasks and
+      // descendant tasks, while the dependency should be more relaxed.
+      // For example, taskwait only needs to wait for children, not the all
+      // descendants.
+      taskgroup->count = 0;
 #else
       kmp_flag_32 flag(RCAST(kmp_uint32 *, &taskgroup->count), 0U);
       while (TCR_4(taskgroup->count) != 0) {

@@ -3369,13 +3369,18 @@ static inline void __kmp_abt_free_task(kmp_info_t *th, kmp_taskdata_t *taskdata)
 {
   int gtid = __kmp_gtid_from_thread(th);
 
-  KA_TRACE(30, ("__kmp_free_task: (enter) T#%d - task %p\n", gtid, taskdata));
+  KA_TRACE(30, ("__kmp_abt_free_task: (enter) T#%d - task %p\n", gtid,
+                taskdata));
 
   /* [AC] we need those steps to mark the task as finished so the dependencies
    *  can be completed */
   taskdata->td_flags.complete = 1; // mark the task as completed
   __kmp_release_deps(gtid, taskdata);
   taskdata->td_flags.executing = 0; // suspend the finishing task
+
+  // Wait for all tasks after releasing (=pushing) dependent tasks
+  __kmp_abt_wait_child_tasks(th, FALSE);
+
   // Check to make sure all flags and counters have the correct values
   //KMP_DEBUG_ASSERT(taskdata->td_flags.tasktype == TASK_EXPLICIT);
   //KMP_DEBUG_ASSERT(taskdata->td_flags.executing == 0);
@@ -3425,23 +3430,17 @@ static void __kmp_abt_execute_task(void *arg) {
   // Run __kmp_invoke_task to handle internal counters correctly .
   (*(task->routine))(gtid, task);
 
-  kmp_taskdata_t *current_task = th->th.th_current_task;
-
   if (!taskdata->td_flags.tiedness) {
     // If this task is an untied one, we need to retrieve kmp_info because it
     // may have been changed. */
     th = __kmp_abt_get_self_info();
   }
 
-  /* Reset th's ownership */
-  __kmp_abt_release_info(th);
+  // Free this task.
+  __kmp_abt_free_task(th, taskdata);
 
-  // Finish all the remaining tasks created by this task.
-  for (int i = 0; i < taskdata->td_tq_cur_size; i++) {
-    int status = ABT_thread_free(&taskdata->td_task_queue[i]);
-    KMP_ASSERT(status == ABT_SUCCESS);
-  }
-  taskdata->td_tq_cur_size = 0;
+  // Reset th's ownership
+  __kmp_abt_release_info(th);
 
   KA_TRACE(20, ("__kmp_abt_execute_task: T#%d after executing task %p.\n",
                 __kmp_gtid_from_thread(th), task));
