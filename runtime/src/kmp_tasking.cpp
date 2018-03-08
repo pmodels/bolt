@@ -1534,15 +1534,6 @@ kmp_int32 __kmp_omp_task(kmp_int32 gtid, kmp_task_t *new_task,
                          bool serialize_immediate) {
   kmp_taskdata_t *new_taskdata = KMP_TASK_TO_TASKDATA(new_task);
 
-#if KMP_USE_ABT
-  if (new_taskdata->td_flags.final) {
-      // Execute this task immediately because it is final
-      kmp_taskdata_t *current_task = __kmp_threads[gtid]->th.th_current_task;
-      __kmp_invoke_task(gtid, new_task, current_task);
-      return TASK_CURRENT_NOT_QUEUED;
-  }
-#endif
-
 /* Should we execute the new task or queue it? For now, let's just always try to
    queue it.  If the queue fills up, then we'll execute it.  */
 #if OMP_45_ENABLED
