@@ -1,5 +1,4 @@
 // RUN: %libomp-compile-and-run
-// REQUIRES: !abt
 #include <stdio.h>
 #include "omp_testsuite.h"
 
@@ -19,7 +18,10 @@ void wait_for_release_then_increment(int rank)
 {
   fprintf(stderr, "Thread nr %d enters first for construct"
     " and waits.\n", rank);
-  while (release == 0);
+  while (release == 0) {
+    // Instead of busy-wait, suspends the implicit task.
+    #pragma omp taskyield
+  }
   #pragma omp atomic
   count++;
 }
