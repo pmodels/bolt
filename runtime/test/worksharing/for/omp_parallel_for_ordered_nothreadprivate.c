@@ -1,18 +1,8 @@
 // RUN: %libomp-compile-and-run
-// REQUIRES: !(abt && clang)
 #include <stdio.h>
 #include "omp_testsuite.h"
 
 static int last_i = 0;
-
-int i;
-#pragma omp threadprivate(i)
-
-/* Variable ii is used to avoid problems with a threadprivate variable used as a loop
- * index. See test omp_threadprivate_for.
- */
-static int ii;
-#pragma omp threadprivate(ii)
 
 /*!
   Utility function: returns true if the passed argument is larger than
@@ -38,7 +28,7 @@ int test_omp_parallel_for_ordered()
   last_i = 0;
   #pragma omp parallel for schedule(static,1) private(i) ordered
   for (i = 1; i < 100; i++) {
-    ii = i;
+    int ii = i;
     #pragma omp ordered
     {
       is_larger = check_i_islarger2 (ii) && is_larger;

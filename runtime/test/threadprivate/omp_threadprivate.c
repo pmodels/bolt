@@ -1,4 +1,5 @@
 // RUN: %libomp-compile-and-run
+// REQUIRES: !(abt && clang)
 /*
  * Threadprivate is tested in 2 ways:
  * 1. The global variable declared as threadprivate should have

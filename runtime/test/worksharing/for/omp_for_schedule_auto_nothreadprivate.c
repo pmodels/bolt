@@ -1,12 +1,8 @@
 // RUN: %libomp-compile-and-run
-// REQUIRES: !(abt && clang)
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include "omp_testsuite.h"
-
-int sum1;
-#pragma omp threadprivate(sum1)
 
 int test_omp_for_auto()
 {
@@ -30,7 +26,7 @@ int test_omp_for_auto()
   #pragma omp parallel
   {
     int i;
-    sum1 = 0;
+    int sum1 = 0;
     #pragma omp for firstprivate(sum0) schedule(auto)
     for (i = 1; i <= LOOPCOUNT; i++) {
       active_threads[omp_get_thread_num()] = 1;

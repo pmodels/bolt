@@ -1,5 +1,4 @@
 // RUN: %libomp-compile-and-run
-// REQUIRES: !(abt && clang)
 #include <stdio.h>
 #include <math.h>
 #include "omp_testsuite.h"
@@ -14,9 +13,6 @@ static void do_some_work()
   }
 }
 
-int sum1;
-#pragma omp threadprivate(sum1)
-
 int test_omp_for_private()
 {
   int sum = 0;
@@ -27,7 +23,7 @@ int test_omp_for_private()
 
   #pragma omp parallel
   {
-    sum1 = 0;  /* setting sum1 in each thread to 0 */
+    int sum1 = 0;  /* setting sum1 in each thread to 0 */
     {  /* begin of orphaned block */
       int i;
       #pragma omp for private(sum0) schedule(static,1)

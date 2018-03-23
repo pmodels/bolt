@@ -1,12 +1,6 @@
 // RUN: %libomp-compile-and-run
-// REQUIRES: !(abt && clang)
 #include <stdio.h>
 #include "omp_testsuite.h"
-
-int myit = 0;
-#pragma omp threadprivate(myit)
-int myresult = 0;
-#pragma omp threadprivate(myresult)
 
 int test_omp_single_private()
 {
@@ -15,15 +9,14 @@ int test_omp_single_private()
   int nr_iterations;
   int i;
 
-  myit = 0;
   nr_threads_in_single = 0;
   nr_iterations = 0;
   result = 0;
 
   #pragma omp parallel private(i)
   {
-    myresult = 0;
-    myit = 0;
+    int myresult = 0;
+    int myit = 0;
     for (i = 0; i < LOOPCOUNT; i++) {
       #pragma omp single private(nr_threads_in_single) nowait
       {

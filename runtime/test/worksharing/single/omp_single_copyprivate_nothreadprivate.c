@@ -1,11 +1,7 @@
 // RUN: %libomp-compile-and-run
-// REQUIRES: !(abt && clang)
 #include "omp_testsuite.h"
 
 #define DEBUG_TEST 0
-
-int j;
-#pragma omp threadprivate(j)
 
 int test_omp_single_copyprivate()
 {
@@ -14,7 +10,8 @@ int test_omp_single_copyprivate()
 
   result = 0;
   nr_iterations = 0;
-  #pragma omp parallel num_threads(4)
+  int j;
+  #pragma omp parallel num_threads(4) private(j)
   {
     int i;
     for (i = 0; i < LOOPCOUNT; i++)
