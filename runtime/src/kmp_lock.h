@@ -22,7 +22,9 @@
 
 #if KMP_USE_ABT
 #include <abt.h>
+#if !KMP_ABT_BOOTSTRAP_WITH_YIELD
 #include <pthread.h>
+#endif
 #endif
 
 #ifdef __cplusplus
@@ -128,24 +130,68 @@ struct kmp_abt_mutex_lock;
 typedef struct kmp_abt_mutex_lock kmp_abt_mutex_lock_t;
 
 struct kmp_abt_spin_lock {
-  pthread_spinlock_t spinlock;
+#if KMP_ABT_BOOTSTRAP_WITH_YIELD
+  char lock;
+  char align[CACHE_LINE - 1];
+#else
+   pthread_spinlock_t spinlock;
+#endif
 };
 typedef struct kmp_abt_spin_lock kmp_abt_spin_lock_t;
 
 static inline int __kmp_abt_acquire_spin_lock(kmp_abt_spin_lock_t *lck) {
+#if KMP_ABT_BOOTSTRAP_WITH_YIELD
+  while (KMP_XCHG_FIXED8(&lck->lock, 1)) {
+    while (*((volatile char *)&lck->lock) == 1) {
+      if (ABT_initialized() == ABT_SUCCESS) {
+        ABT_thread_yield();
+      } else {
+        ;// Busy wait.
+      }
+    }
+    KMP_MB();
+  }
+  return 0;
+#else
   return pthread_spin_lock(&lck->spinlock);
+#endif
 }
 static inline int __kmp_abt_test_spin_lock(kmp_abt_spin_lock_t *lck) {
+#if KMP_ABT_BOOTSTRAP_WITH_YIELD
+  if (KMP_XCHG_FIXED8(&lck->lock, 1)) {
+    return 1;
+  } else {
+    // Successfully take the lock.
+    return 0;
+  }
+#else
   return pthread_spin_trylock(&lck->spinlock);
+#endif
 }
 static inline void __kmp_abt_release_spin_lock(kmp_abt_spin_lock_t *lck) {
+#if KMP_ABT_BOOTSTRAP_WITH_YIELD
+  KMP_MB();
+  lck->lock = 0;
+  KMP_MB();
+#else
   pthread_spin_unlock(&lck->spinlock);
+#endif
 }
 static inline void __kmp_abt_init_spin_lock(kmp_abt_spin_lock_t *lck) {
+#if KMP_ABT_BOOTSTRAP_WITH_YIELD
+  KMP_MB();
+  lck->lock = 0;
+  KMP_MB();
+#else
   pthread_spin_init(&lck->spinlock, 0);
+#endif
 }
 static inline void __kmp_abt_destroy_spin_lock(kmp_abt_spin_lock_t *lck) {
+#if KMP_ABT_BOOTSTRAP_WITH_YIELD
+  ; // Do nothing.
+#else
   pthread_spin_destroy(&lck->spinlock);
+#endif
 }
 
 #endif

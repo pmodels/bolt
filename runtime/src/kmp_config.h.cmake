@@ -77,6 +77,7 @@
 #define MAX_ABT_TASKS 1024
 #define ABT_USE_PRIVATE_POOLS
 // #define ABT_USE_SCHED_SLEEP
+#define KMP_ABT_BOOTSTRAP_WITH_YIELD 1
 #endif
 // Configured cache line based on architecture
 #if KMP_ARCH_PPC64
