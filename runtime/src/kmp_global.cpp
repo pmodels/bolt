@@ -15,6 +15,9 @@
 #include "kmp_affinity.h"
 
 kmp_key_t __kmp_gtid_threadprivate_key;
+#if KMP_USE_ABT
+pthread_key_t __kmp_gtid_pth_threadprivate_key;
+#endif
 
 #if KMP_ARCH_X86 || KMP_ARCH_X86_64
 kmp_cpuinfo_t __kmp_cpuinfo = {0}; // Not initialized
@@ -265,7 +268,6 @@ kmp_affin_mask_t *__kmp_affinity_masks = NULL;
 unsigned __kmp_affinity_num_masks = 0;
 
 char *__kmp_cpuinfo_file = NULL;
-
 #endif /* KMP_AFFINITY_SUPPORTED */
 
 #if OMP_40_ENABLED
@@ -501,5 +503,24 @@ int _You_must_link_with_Intel_OpenMP_library = 1;
 #if KMP_OS_WINDOWS && (KMP_VERSION_MAJOR > 4)
 int _You_must_link_with_Microsoft_OpenMP_library = 1;
 #endif
+
+
+#if KMP_USE_ABT
+
+volatile int __kmp_abt_init_global = FALSE;
+void __kmp_abt_global_initialize() {
+  int status;
+  // Initialize Argobots before other initializations.
+  status = ABT_init(0, NULL);
+  KMP_CHECK_SYSFAIL("ABT_init", status);
+  __kmp_abt_init_global = TRUE;
+}
+
+void __kmp_abt_global_destroy() {
+  ABT_finalize();
+  __kmp_abt_init_global = FALSE;
+}
+
+#endif // KMP_USE_ABT
 
 // end of file //

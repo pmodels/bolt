@@ -38,6 +38,159 @@
 #endif
 #endif
 
+#if KMP_USE_ABT
+
+void __kmp_validate_locks(void) {
+  ;// Empty.
+}
+
+// kmp_base_xxx_lock_t must be larger than 64 bytes to avoid unintentional
+// inlining (See comments by grepping "__kmp_base_user_lock_size".)
+// lt = locktype
+#define KMP_DEFINE_LOCKS(locktype) \
+typedef struct { char _[64]; } kmp_base_ ## locktype ## _lock_t;               \
+static int __kmp_is_ ## locktype ## _lock_initialized                          \
+             (kmp_ ## locktype ## _lock_t *lck) {                              \
+  return lck == lck->initialized;                                              \
+}                                                                              \
+int __kmp_acquire_ ## locktype ## _lock                                        \
+      (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {                     \
+  return ABT_mutex_lock(lck->mutex);                                           \
+}                                                                              \
+int __kmp_test_ ## locktype ## _lock                                           \
+      (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {                     \
+  return ABT_mutex_trylock(lck->mutex) == ABT_SUCCESS;                         \
+}                                                                              \
+int __kmp_release_ ## locktype ## _lock                                        \
+      (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {                     \
+  return ABT_mutex_unlock(lck->mutex);                                         \
+}                                                                              \
+void __kmp_init_ ## locktype ## _lock                                          \
+       (kmp_ ## locktype ## _lock_t *lck) {                                    \
+  ABT_mutex_create(&lck->mutex);                                               \
+  lck->initialized = lck;                                                      \
+}                                                                              \
+void __kmp_destroy_ ## locktype ## _lock                                       \
+       (kmp_ ## locktype ## _lock_t *lck) {                                    \
+  lck->initialized = NULL;                                                     \
+  ABT_mutex_free(&lck->mutex);                                                 \
+}                                                                              \
+static int __kmp_acquire_ ## locktype ## _lock_with_checks                     \
+             (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {              \
+  return __kmp_acquire_ ## locktype ## _lock(lck, gtid);                       \
+}                                                                              \
+static int __kmp_test_ ## locktype ## _lock_with_checks                        \
+             (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {              \
+  return __kmp_test_ ## locktype ## _lock(lck, gtid);                          \
+}                                                                              \
+static int __kmp_release_ ## locktype ## _lock_with_checks                     \
+             (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {              \
+  return __kmp_release_ ## locktype ## _lock(lck, gtid);                       \
+}                                                                              \
+static void __kmp_init_ ## locktype ## _lock_with_checks                       \
+              (kmp_ ## locktype ## _lock_t *lck) {                             \
+  __kmp_init_ ## locktype ## _lock(lck);                                       \
+}                                                                              \
+static void __kmp_destroy_ ## locktype ## _lock_with_checks                    \
+              (kmp_ ## locktype ## _lock_t *lck) {                             \
+  __kmp_destroy_ ## locktype ## _lock(lck);                                    \
+}                                                                              \
+int __kmp_acquire_nested_ ## locktype ## _lock                                 \
+      (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {                     \
+  return ABT_mutex_lock(lck->mutex);                                           \
+}                                                                              \
+int __kmp_test_nested_ ## locktype ## _lock                                    \
+      (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {                     \
+  return ABT_mutex_trylock(lck->mutex) == ABT_SUCCESS;                         \
+}                                                                              \
+int __kmp_release_nested_ ## locktype ## _lock                                 \
+      (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {                     \
+  return ABT_mutex_unlock(lck->mutex);                                         \
+}                                                                              \
+void __kmp_init_nested_ ## locktype ## _lock                                   \
+       (kmp_ ## locktype ## _lock_t *lck) {                                    \
+  ABT_mutex_attr mattr;                                                        \
+  ABT_mutex_attr_create(&mattr);                                               \
+  ABT_mutex_attr_set_recursive(mattr, ABT_TRUE);                               \
+  ABT_mutex_create_with_attr(mattr, &lck->mutex);                              \
+  ABT_mutex_attr_free(&mattr);                                                 \
+  lck->initialized = lck;                                                      \
+}                                                                              \
+void __kmp_destroy_nested_ ## locktype ## _lock                                \
+       (kmp_ ## locktype ## _lock_t *lck) {                                    \
+  lck->initialized = NULL;                                                     \
+  ABT_mutex_free(&lck->mutex);                                                 \
+}                                                                              \
+static int __kmp_acquire_nested_ ## locktype ## _lock_with_checks              \
+             (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {              \
+  return __kmp_acquire_nested_ ## locktype ## _lock(lck, gtid);                \
+}                                                                              \
+static int __kmp_test_nested_ ## locktype ## _lock_with_checks                 \
+             (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {              \
+  return __kmp_test_nested_ ## locktype ## _lock(lck, gtid);                   \
+}                                                                              \
+static int __kmp_release_nested_ ## locktype ## _lock_with_checks              \
+             (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {              \
+  return __kmp_release_nested_ ## locktype ## _lock(lck, gtid);                \
+}                                                                              \
+static void __kmp_init_nested_ ## locktype ## _lock_with_checks                \
+              (kmp_ ## locktype ## _lock_t *lck) {                             \
+  __kmp_init_nested_ ## locktype ## _lock(lck);                                \
+}                                                                              \
+static void __kmp_destroy_nested_ ## locktype ## _lock_with_checks             \
+              (kmp_ ## locktype ## _lock_t *lck) {                             \
+  __kmp_destroy_nested_ ## locktype ## _lock(lck);                             \
+}                                                                              \
+static const ident_t *__kmp_get_ ## locktype ## _lock_location                 \
+                        (kmp_ ## locktype ## _lock_t *lck) {                   \
+  return lck->location;                                                        \
+}                                                                              \
+static void __kmp_set_ ## locktype ## _lock_location                           \
+              (kmp_ ## locktype ## _lock_t *lck, const ident_t *loc) {         \
+  lck->location = loc;                                                         \
+}                                                                              \
+static kmp_lock_flags_t __kmp_get_ ## locktype ## _lock_flags                  \
+                          (kmp_ ## locktype ## _lock_t *lck) {                 \
+  return lck->flags;                                                           \
+}                                                                              \
+static void __kmp_set_ ## locktype ## _lock_flags                              \
+              (kmp_ ## locktype ## _lock_t *lck, kmp_lock_flags_t flags) {     \
+  lck->flags = flags;                                                          \
+}                                                                              \
+static kmp_int32 __kmp_get_ ## locktype ## _lock_owner                         \
+                   (kmp_ ## locktype ## _lock_t *lck) {                        \
+  return 0;                                                                    \
+}
+
+KMP_DEFINE_LOCKS(tas)
+KMP_DEFINE_LOCKS(ticket)
+KMP_DEFINE_LOCKS(queuing)
+KMP_DEFINE_LOCKS(drdpa)
+KMP_DEFINE_LOCKS(futex)
+KMP_DEFINE_LOCKS(adaptive)
+typedef kmp_abt_mutex_lock_t kmp_hle_lock_t;
+KMP_DEFINE_LOCKS(hle)
+typedef kmp_abt_mutex_lock_t kmp_rtm_lock_t;
+KMP_DEFINE_LOCKS(rtm)
+
+int __kmp_acquire_bootstrap_lock(kmp_bootstrap_lock_t *lck) {
+  return __kmp_abt_acquire_spin_lock(lck);
+}
+int __kmp_test_bootstrap_lock(kmp_bootstrap_lock_t *lck) {
+  return __kmp_abt_test_spin_lock(lck);
+}
+void __kmp_release_bootstrap_lock(kmp_bootstrap_lock_t *lck) {
+  __kmp_abt_release_spin_lock(lck);
+}
+void __kmp_init_bootstrap_lock(kmp_bootstrap_lock_t *lck) {
+  __kmp_abt_init_spin_lock(lck);
+}
+void __kmp_destroy_bootstrap_lock(kmp_bootstrap_lock_t *lck) {
+  __kmp_abt_destroy_spin_lock(lck);
+}
+
+#else // KMP_USE_ABT
+
 /* Implement spin locks for internal library use.             */
 /* The algorithm implemented is Lamport's bakery lock [1974]. */
 
@@ -2734,6 +2887,8 @@ static void __kmp_set_drdpa_lock_flags(kmp_drdpa_lock_t *lck,
                                        kmp_lock_flags_t flags) {
   lck->lk.flags = flags;
 }
+
+#endif // KMP_USE_ABT
 
 // Time stamp counter
 #if KMP_ARCH_X86 || KMP_ARCH_X86_64

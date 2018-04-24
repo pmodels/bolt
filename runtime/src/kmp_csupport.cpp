@@ -530,7 +530,7 @@ void __kmpc_end_serialized_parallel(ident_t *loc, kmp_int32 global_tid) {
 
 /* return to the parallel section */
 
-#if KMP_ARCH_X86 || KMP_ARCH_X86_64
+#if (KMP_ARCH_X86 || KMP_ARCH_X86_64) && !KMP_USE_ABT
     if (__kmp_inherit_fp_control && serial_team->t.t_fp_control_saved) {
       __kmp_clear_x87_fpu_status_word();
       __kmp_load_x87_fpu_control_word(&serial_team->t.t_x87_fpu_control_word);
@@ -1129,7 +1129,9 @@ void __kmpc_critical(ident_t *loc, kmp_int32 global_tid,
   // TODO: add THR_OVHD_STATE
 
   KMP_CHECK_USER_LOCK_INIT();
-
+#if KMP_USE_ABT
+  if (0) { }
+#else // KMP_USE_ABT
   if ((__kmp_user_lock_kind == lk_tas) &&
       (sizeof(lck->tas.lk.poll) <= OMP_CRITICAL_SIZE)) {
     lck = (kmp_user_lock_p)crit;
@@ -1140,6 +1142,7 @@ void __kmpc_critical(ident_t *loc, kmp_int32 global_tid,
     lck = (kmp_user_lock_p)crit;
   }
 #endif
+#endif // KMP_USE_ABT
   else { // ticket, queuing or drdpa
     lck = __kmp_get_critical_section_ptr(crit, loc, global_tid);
   }
@@ -1500,6 +1503,10 @@ void __kmpc_end_critical(ident_t *loc, kmp_int32 global_tid,
 
 #else // KMP_USE_DYNAMIC_LOCK
 
+
+#if KMP_USE_ABT
+  if (0) { }
+#else // KMP_USE_ABT
   if ((__kmp_user_lock_kind == lk_tas) &&
       (sizeof(lck->tas.lk.poll) <= OMP_CRITICAL_SIZE)) {
     lck = (kmp_user_lock_p)crit;
@@ -1510,6 +1517,7 @@ void __kmpc_end_critical(ident_t *loc, kmp_int32 global_tid,
     lck = (kmp_user_lock_p)crit;
   }
 #endif
+#endif // KMP_USE_ABT
   else { // ticket, queuing or drdpa
     lck = (kmp_user_lock_p)TCR_PTR(*((kmp_user_lock_p *)crit));
   }
@@ -2174,6 +2182,9 @@ void __kmpc_init_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
 
   KMP_CHECK_USER_LOCK_INIT();
 
+#if KMP_USE_ABT
+  if (0) { }
+#else // KMP_USE_ABT
   if ((__kmp_user_lock_kind == lk_tas) &&
       (sizeof(lck->tas.lk.poll) <= OMP_LOCK_T_SIZE)) {
     lck = (kmp_user_lock_p)user_lock;
@@ -2184,6 +2195,7 @@ void __kmpc_init_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
     lck = (kmp_user_lock_p)user_lock;
   }
 #endif
+#endif // KMP_USE_ABT
   else {
     lck = __kmp_user_lock_allocate(user_lock, gtid, 0);
   }
@@ -2246,6 +2258,9 @@ void __kmpc_init_nest_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
 
   KMP_CHECK_USER_LOCK_INIT();
 
+#if KMP_USE_ABT
+  if (0) { }
+#else // KMP_USE_ABT
   if ((__kmp_user_lock_kind == lk_tas) &&
       (sizeof(lck->tas.lk.poll) + sizeof(lck->tas.lk.depth_locked) <=
        OMP_NEST_LOCK_T_SIZE)) {
@@ -2258,6 +2273,7 @@ void __kmpc_init_nest_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
     lck = (kmp_user_lock_p)user_lock;
   }
 #endif
+#endif // KMP_USE_ABT
   else {
     lck = __kmp_user_lock_allocate(user_lock, gtid, 0);
   }
@@ -2316,6 +2332,9 @@ void __kmpc_destroy_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
 #else
   kmp_user_lock_p lck;
 
+#if KMP_USE_ABT
+  if (0) { }
+#else // KMP_USE_ABT
   if ((__kmp_user_lock_kind == lk_tas) &&
       (sizeof(lck->tas.lk.poll) <= OMP_LOCK_T_SIZE)) {
     lck = (kmp_user_lock_p)user_lock;
@@ -2326,6 +2345,7 @@ void __kmpc_destroy_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
     lck = (kmp_user_lock_p)user_lock;
   }
 #endif
+#endif // KMP_USE_ABT
   else {
     lck = __kmp_lookup_user_lock(user_lock, "omp_destroy_lock");
   }
@@ -2346,6 +2366,9 @@ void __kmpc_destroy_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
 #endif /* USE_ITT_BUILD */
   DESTROY_LOCK(lck);
 
+#if KMP_USE_ABT
+  if (0) { }
+#else // KMP_USE_ABT
   if ((__kmp_user_lock_kind == lk_tas) &&
       (sizeof(lck->tas.lk.poll) <= OMP_LOCK_T_SIZE)) {
     ;
@@ -2356,6 +2379,7 @@ void __kmpc_destroy_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
     ;
   }
 #endif
+#endif // KMP_USE_ABT
   else {
     __kmp_user_lock_free(user_lock, gtid, lck);
   }
@@ -2386,6 +2410,9 @@ void __kmpc_destroy_nest_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
 
   kmp_user_lock_p lck;
 
+#if KMP_USE_ABT
+  if (0) { }
+#else // KMP_USE_ABT
   if ((__kmp_user_lock_kind == lk_tas) &&
       (sizeof(lck->tas.lk.poll) + sizeof(lck->tas.lk.depth_locked) <=
        OMP_NEST_LOCK_T_SIZE)) {
@@ -2398,6 +2425,7 @@ void __kmpc_destroy_nest_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
     lck = (kmp_user_lock_p)user_lock;
   }
 #endif
+#endif // KMP_USE_ABT
   else {
     lck = __kmp_lookup_user_lock(user_lock, "omp_destroy_nest_lock");
   }
@@ -2419,6 +2447,9 @@ void __kmpc_destroy_nest_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
 
   DESTROY_NESTED_LOCK(lck);
 
+#if KMP_USE_ABT
+  if (0) { }
+#else // KMP_USE_ABT
   if ((__kmp_user_lock_kind == lk_tas) &&
       (sizeof(lck->tas.lk.poll) + sizeof(lck->tas.lk.depth_locked) <=
        OMP_NEST_LOCK_T_SIZE)) {
@@ -2431,6 +2462,7 @@ void __kmpc_destroy_nest_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
     ;
   }
 #endif
+#endif // KMP_USE_ABT
   else {
     __kmp_user_lock_free(user_lock, gtid, lck);
   }
@@ -2484,6 +2516,9 @@ void __kmpc_set_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
 
   kmp_user_lock_p lck;
 
+#if KMP_USE_ABT
+  if (0) { }
+#else // KMP_USE_ABT
   if ((__kmp_user_lock_kind == lk_tas) &&
       (sizeof(lck->tas.lk.poll) <= OMP_LOCK_T_SIZE)) {
     lck = (kmp_user_lock_p)user_lock;
@@ -2494,6 +2529,7 @@ void __kmpc_set_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
     lck = (kmp_user_lock_p)user_lock;
   }
 #endif
+#endif // KMP_USE_ABT
   else {
     lck = __kmp_lookup_user_lock(user_lock, "omp_set_lock");
   }
@@ -2577,6 +2613,9 @@ void __kmpc_set_nest_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
   int acquire_status;
   kmp_user_lock_p lck;
 
+#if KMP_USE_ABT
+  if (0) { }
+#else // KMP_USE_ABT
   if ((__kmp_user_lock_kind == lk_tas) &&
       (sizeof(lck->tas.lk.poll) + sizeof(lck->tas.lk.depth_locked) <=
        OMP_NEST_LOCK_T_SIZE)) {
@@ -2589,6 +2628,7 @@ void __kmpc_set_nest_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
     lck = (kmp_user_lock_p)user_lock;
   }
 #endif
+#endif // KMP_USE_ABT
   else {
     lck = __kmp_lookup_user_lock(user_lock, "omp_set_nest_lock");
   }
@@ -2674,7 +2714,9 @@ void __kmpc_unset_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
 
   /* Can't use serial interval since not block structured */
   /* release the lock */
-
+#if KMP_USE_ABT
+  if (0) { }
+#else // KMP_USE_ABT
   if ((__kmp_user_lock_kind == lk_tas) &&
       (sizeof(lck->tas.lk.poll) <= OMP_LOCK_T_SIZE)) {
 #if KMP_OS_LINUX &&                                                            \
@@ -2708,6 +2750,7 @@ void __kmpc_unset_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
     lck = (kmp_user_lock_p)user_lock;
   }
 #endif
+#endif // KMP_USE_ABT
   else {
     lck = __kmp_lookup_user_lock(user_lock, "omp_unset_lock");
   }
@@ -2767,7 +2810,9 @@ void __kmpc_unset_nest_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
   kmp_user_lock_p lck;
 
   /* Can't use serial interval since not block structured */
-
+#if KMP_USE_ABT
+  if (0) { }
+#else // KMP_USE_ABT
   if ((__kmp_user_lock_kind == lk_tas) &&
       (sizeof(lck->tas.lk.poll) + sizeof(lck->tas.lk.depth_locked) <=
        OMP_NEST_LOCK_T_SIZE)) {
@@ -2823,6 +2868,7 @@ void __kmpc_unset_nest_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
     lck = (kmp_user_lock_p)user_lock;
   }
 #endif
+#endif // KMP_USE_ABT
   else {
     lck = __kmp_lookup_user_lock(user_lock, "omp_unset_nest_lock");
   }
@@ -2912,7 +2958,9 @@ int __kmpc_test_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
 
   kmp_user_lock_p lck;
   int rc;
-
+#if KMP_USE_ABT
+  if (0) { }
+#else // KMP_USE_ABT
   if ((__kmp_user_lock_kind == lk_tas) &&
       (sizeof(lck->tas.lk.poll) <= OMP_LOCK_T_SIZE)) {
     lck = (kmp_user_lock_p)user_lock;
@@ -2923,6 +2971,7 @@ int __kmpc_test_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
     lck = (kmp_user_lock_p)user_lock;
   }
 #endif
+#endif // KMP_USE_ABT
   else {
     lck = __kmp_lookup_user_lock(user_lock, "omp_test_lock");
   }
@@ -3014,7 +3063,9 @@ int __kmpc_test_nest_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
 
   kmp_user_lock_p lck;
   int rc;
-
+#if KMP_USE_ABT
+  if (0) { }
+#else // KMP_USE_ABT
   if ((__kmp_user_lock_kind == lk_tas) &&
       (sizeof(lck->tas.lk.poll) + sizeof(lck->tas.lk.depth_locked) <=
        OMP_NEST_LOCK_T_SIZE)) {
@@ -3027,6 +3078,7 @@ int __kmpc_test_nest_lock(ident_t *loc, kmp_int32 gtid, void **user_lock) {
     lck = (kmp_user_lock_p)user_lock;
   }
 #endif
+#endif // KMP_USE_ABT
   else {
     lck = __kmp_lookup_user_lock(user_lock, "omp_test_nest_lock");
   }

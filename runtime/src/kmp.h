@@ -17,6 +17,20 @@
 
 #include "kmp_config.h"
 
+/* ------------------------------------------------------------------------ */
+// TYPES AND DATA STRUCTURES
+/* ------------------------------------------------------------------------ */
+
+#if KMP_USE_ABT
+
+#include <abt.h>
+
+typedef ABT_task kmp_tasklet_t;
+typedef ABT_barrier kmp_barrier_t;
+typedef ABT_cond kmp_cond_t;
+
+#endif
+
 /* #define BUILD_PARALLEL_ORDERED 1 */
 
 /* This fix replaces gettimeofday with clock_gettime for better scalability on
@@ -50,7 +64,9 @@
 #define TASK_PROXY 1
 #define TASK_FULL 0
 
+#if !KMP_USE_ABT
 #define KMP_CANCEL_THREADS
+#endif
 #define KMP_THREAD_ATTR
 
 // Android does not have pthread_cancel.  Undefine KMP_CANCEL_THREADS if being
@@ -105,7 +121,7 @@ class kmp_stats_list;
 #endif
 #include "kmp_i18n.h"
 
-#define KMP_HANDLE_SIGNALS (KMP_OS_UNIX || KMP_OS_WINDOWS)
+#define KMP_HANDLE_SIGNALS ((KMP_OS_UNIX || KMP_OS_WINDOWS) && !KMP_USE_ABT)
 
 #include "kmp_wrapper_malloc.h"
 #if KMP_OS_UNIX
@@ -1076,6 +1092,24 @@ static void __kmp_x86_pause(void) { _mm_pause(); }
 #define KMP_CPU_PAUSE() /* nothing to do */
 #endif
 
+#if KMP_USE_ABT
+# define KMP_INIT_YIELD(count)                                                 \
+  {                                                                            \
+    (void)(count);                                                             \
+  }
+# define KMP_YIELD(cond)                                                       \
+  {                                                                            \
+    __kmp_yield((cond));                                                       \
+  }
+# define KMP_YIELD_WHEN(cond, count)                                           \
+  {                                                                            \
+    __kmp_yield((cond));                                                       \
+  }
+# define KMP_YIELD_SPIN(count)                                                 \
+  {                                                                            \
+    __kmp_yield(1);                                                            \
+  }
+#else // KMP_USE_ABT
 #define KMP_INIT_YIELD(count)                                                  \
   { (count) = __kmp_yield_init; }
 
@@ -1106,6 +1140,7 @@ static void __kmp_x86_pause(void) { _mm_pause(); }
       (count) = __kmp_yield_next;                                              \
     }                                                                          \
   }
+#endif // KMP_USE_ABT
 
 /* ------------------------------------------------------------------------ */
 /* Support datatypes for the orphaned construct nesting checks.             */
@@ -1170,11 +1205,21 @@ typedef DWORD kmp_key_t;
 #endif /* KMP_OS_WINDOWS */
 
 #if KMP_OS_UNIX
+#if KMP_USE_ABT
+typedef ABT_thread kmp_thread_t;
+typedef ABT_key kmp_key_t;
+typedef ABT_thread kmp_abt_task_t;
+#else
 typedef pthread_t kmp_thread_t;
 typedef pthread_key_t kmp_key_t;
 #endif
+#endif
 
 extern kmp_key_t __kmp_gtid_threadprivate_key;
+#if KMP_USE_ABT
+// In case where external pthreads call OpenMP functions.
+extern pthread_key_t __kmp_gtid_pth_threadprivate_key;
+#endif
 
 typedef struct kmp_sys_info {
   long maxrss; /* the maximum resident set size utilized (in kilobytes)     */
@@ -1762,7 +1807,11 @@ typedef enum kmp_bar_pat { /* Barrier communication patterns */
                            bp_last_bar /* Placeholder to mark the end */
 } kmp_bar_pat_e;
 
+#if KMP_USE_ABT
+/* BOLT does not use a KMP's barrier, so we need to copy icvs in a naive way. */
+#else
 #define KMP_BARRIER_ICV_PUSH 1
+#endif
 
 /* Record for holding the values of the internal controls stack records */
 typedef struct kmp_internal_control {
@@ -1909,6 +1958,9 @@ typedef struct kmp_desc_base {
   size_t ds_stacksize;
   int ds_stackgrow;
   kmp_thread_t ds_thread;
+#if KMP_USE_ABT
+  kmp_tasklet_t ds_tasklet;
+#endif
   volatile int ds_tid;
   int ds_gtid;
 #if KMP_OS_WINDOWS
@@ -2005,6 +2057,13 @@ typedef struct kmp_local {
   (((xthread)->th.th_current_task->td_icvs.dynamic) = (xval))
 #define get__dynamic(xthread)                                                  \
   (((xthread)->th.th_current_task->td_icvs.dynamic) ? (FTN_TRUE) : (FTN_FALSE))
+
+#if KMP_USE_ABT
+#define set__tasklet(xthread, xval)                                            \
+  (((xthread)->th.use_tasklet_team) = (xval))
+#define get__tasklet(xthread)                                                  \
+  (((xthread)->th.use_tasklet_team) ? (FTN_TRUE) : (FTN_FALSE))
+#endif
 
 #define set__nproc(xthread, xval)                                              \
   (((xthread)->th.th_current_task->td_icvs.nproc) = (xval))
@@ -2264,6 +2323,11 @@ struct kmp_taskdata { /* aligned during dynamic allocation       */
 #if OMPT_SUPPORT
   ompt_task_info_t ompt_task_info;
 #endif
+#if KMP_USE_ABT
+  kmp_abt_task_t *td_task_queue; // child tasks
+  kmp_int32 td_tq_cur_size; // current size of td_task_queue
+  kmp_int32 td_tq_max_size; // maximum size of td_task_queue
+#endif
 }; // struct kmp_taskdata
 
 // Make sure padding above worked
@@ -2374,6 +2438,10 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   kmp_info_p *th_next_pool; /* next available thread in the pool */
   kmp_disp_t *th_dispatch; /* thread's dispatch data */
   int th_in_pool; /* in thread pool (32 bits for TCR/TCW) */
+#if KMP_USE_ABT
+  int use_tasklet_team; /* internal control for using tasklet for next parallel
+  region (per thread) */
+#endif
 
   /* The following are cached from the team info structure */
   /* TODO use these in more places as determined to be needed via profiling */
@@ -2466,8 +2534,10 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   int th_active; // ! sleeping; 32 bits for TCR/TCW
   struct cons_header *th_cons; // used for consistency check
 
+#if !KMP_USE_ABT
   /* Add the syncronizing data which is cache aligned and padded. */
   KMP_ALIGN_CACHE kmp_balign_t th_bar[bs_last_barrier];
+#endif
 
   KMP_ALIGN_CACHE volatile kmp_int32
       th_next_waiting; /* gtid+1 of next thread on lock wait queue, 0 if none */
@@ -2545,6 +2615,9 @@ typedef struct KMP_ALIGN_CACHE kmp_base_team {
   // Synchronization Data
   // ---------------------------------------------------------------------------
   KMP_ALIGN_CACHE kmp_ordered_team_t t_ordered;
+#if KMP_USE_ABT
+  kmp_barrier_t t_team_bar;
+#endif
   kmp_balign_team_t t_bar[bs_last_barrier];
   volatile int t_construct; // count of single directive encountered by team
   char pad[sizeof(kmp_lock_t)]; // padding to maintain performance on big iron
@@ -2692,6 +2765,10 @@ struct fortran_inx_info {
 };
 
 /* ------------------------------------------------------------------------ */
+
+#if KMP_USE_ABT
+extern volatile int __kmp_abt_init_global;
+#endif
 
 extern int __kmp_settings;
 extern int __kmp_duplicate_library_ok;
@@ -3274,9 +3351,21 @@ extern int __kmp_read_system_info(struct kmp_sys_info *info);
 extern void __kmp_create_monitor(kmp_info_t *th);
 #endif
 
+#if !KMP_USE_ABT
 extern void *__kmp_launch_thread(kmp_info_t *thr);
+#endif
 
 extern void __kmp_create_worker(int gtid, kmp_info_t *th, size_t stack_size);
+
+#if KMP_USE_ABT
+extern void __kmp_abt_create_uber(int gtid, kmp_info_t *th, size_t stack_size);
+extern void __kmp_abt_revive_worker(kmp_info_t *th);
+extern void __kmp_abt_join_worker(kmp_info_t *th);
+extern int __kmp_abt_create_task(kmp_info_t *th, kmp_task_t *task);
+extern void __kmp_abt_wait_child_tasks(kmp_info_t *th, int yield);
+extern kmp_info_t *__kmp_abt_bind_task_to_thread(kmp_team_t *team,
+                                                 kmp_taskdata_t *taskdata);
+#endif
 
 #if KMP_OS_WINDOWS
 extern int __kmp_still_running(kmp_info_t *th);
@@ -3339,6 +3428,12 @@ extern void __kmp_free_team(kmp_root_t *,
                             kmp_team_t *USE_NESTED_HOT_ARG(kmp_info_t *));
 extern kmp_team_t *__kmp_reap_team(kmp_team_t *);
 
+#if KMP_USE_ABT
+extern void __kmp_abt_global_initialize(void);
+extern void __kmp_abt_global_destroy(void);
+extern void __kmp_abt_set_tasklet(int flag, int gtid);
+#endif
+
 /* ------------------------------------------------------------------------ */
 
 extern void __kmp_initialize_bget(kmp_info_t *th);
@@ -3377,6 +3472,28 @@ extern int __kmp_fork_call(ident_t *loc, int gtid,
                            va_list ap
 #endif
                            );
+
+#if KMP_USE_ABT
+#ifdef KMP_ABT_USE_TASKLET_TEAM
+extern int __kmp_abt_fork_join_tasklet_team(ident_t *loc, int gtid,
+                             enum fork_context_e fork_context,
+                             kmp_int32 argc, microtask_t microtask,
+                             launch_t invoker,
+/* TODO: revert workaround for Intel(R) 64 tracker #96 */
+#if (KMP_ARCH_ARM || KMP_ARCH_X86_64 || KMP_ARCH_AARCH64) && KMP_OS_LINUX
+                             va_list *ap
+#else
+                             va_list ap
+#endif
+                             );
+#endif /* KMP_ABT_USE_TASKLET_TEAM */
+
+extern void __kmp_abt_set_self_info(kmp_info_t *th);
+extern kmp_info_t *__kmp_abt_get_self_info(void);
+extern void __kmp_abt_release_info(kmp_info_t *th);
+extern void __kmp_abt_acquire_info_for_task(kmp_info_t *th,
+                                            kmp_taskdata_t *taskdata);
+#endif /* KMP_USE_ABT */
 
 extern void __kmp_join_call(ident_t *loc, int gtid
 #if OMPT_SUPPORT
@@ -3487,6 +3604,7 @@ extern int __kmp_read_from_file(char const *path, char const *format, ...);
 
 extern void __kmp_query_cpuid(kmp_cpuinfo_t *p);
 
+#if !KMP_USE_ABT
 #define __kmp_load_mxcsr(p) _mm_setcsr(*(p))
 static inline void __kmp_store_mxcsr(kmp_uint32 *p) { *p = _mm_getcsr(); }
 
@@ -3494,6 +3612,7 @@ extern void __kmp_load_x87_fpu_control_word(kmp_int16 *p);
 extern void __kmp_store_x87_fpu_control_word(kmp_int16 *p);
 extern void __kmp_clear_x87_fpu_status_word();
 #define KMP_X86_MXCSR_MASK 0xffffffc0 /* ignore status flags (6 lsb) */
+#endif /* !KMP_USE_ABT */
 
 #endif /* KMP_ARCH_X86 || KMP_ARCH_X86_64 */
 
@@ -3806,6 +3925,7 @@ KMP_EXPORT void KMPC_CONVENTION kmpc_set_stacksize_s(size_t);
 KMP_EXPORT void KMPC_CONVENTION kmpc_set_library(int);
 KMP_EXPORT void KMPC_CONVENTION kmpc_set_defaults(char const *);
 KMP_EXPORT void KMPC_CONVENTION kmpc_set_disp_num_buffers(int);
+
 
 #ifdef __cplusplus
 }

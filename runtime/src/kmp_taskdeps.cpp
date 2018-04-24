@@ -659,6 +659,7 @@ void __kmpc_omp_wait_deps(ident_t *loc_ref, kmp_int32 gtid, kmp_int32 ndeps,
     return;
   }
 
+#if !KMP_USE_ABT
   int thread_finished = FALSE;
   kmp_flag_32 flag((volatile kmp_uint32 *)&(node.dn.npredecessors), 0U);
   while (node.dn.npredecessors > 0) {
@@ -668,6 +669,7 @@ void __kmpc_omp_wait_deps(ident_t *loc_ref, kmp_int32 gtid, kmp_int32 ndeps,
 #endif
                        __kmp_task_stealing_constraint);
   }
+#endif // !KMP_USE_ABT
 
   KA_TRACE(10, ("__kmpc_omp_wait_deps(exit): T#%d finished waiting : loc=%p\n",
                 gtid, loc_ref));

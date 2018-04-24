@@ -1,4 +1,5 @@
 // RUN: %libomp-compile-and-run
+// REQUIRES: !abt
 /*
   Test for the 'schedule(simd:guided)' clause.
   Compiler needs to generate a dynamic dispatching and pass the schedule

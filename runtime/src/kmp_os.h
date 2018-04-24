@@ -61,6 +61,12 @@
 #error Unknown compiler
 #endif
 
+
+#if KMP_USE_ABT
+/* Argobots does not support affinity. */
+#define KMP_AFFINITY_SUPPORTED 0
+#define KMP_GROUP_AFFINITY 0
+#else
 #if (KMP_OS_LINUX || KMP_OS_WINDOWS) && !KMP_OS_CNK
 #define KMP_AFFINITY_SUPPORTED 1
 #if KMP_OS_WINDOWS && KMP_ARCH_X86_64
@@ -72,6 +78,7 @@
 #define KMP_AFFINITY_SUPPORTED 0
 #define KMP_GROUP_AFFINITY 0
 #endif
+#endif /* KMP_USE_ABT */
 
 /* Check for quad-precision extension. */
 #define KMP_HAVE_QUAD 0
@@ -865,7 +872,10 @@ typedef void (*microtask_t)(int *gtid, int *npr, ...);
 
 // Enable dynamic user lock
 #if OMP_45_ENABLED
+#if !KMP_USE_ABT
+// Argobots only supports a single lock type, so we disable it.
 #define KMP_USE_DYNAMIC_LOCK 1
+#endif
 #endif
 
 // Enable Intel(R) Transactional Synchronization Extensions (Intel(R) TSX) if

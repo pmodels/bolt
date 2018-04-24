@@ -35,6 +35,12 @@
 
         use omp_lib_kinds
 
+        character(*)               bolt_version
+        parameter( bolt_version = '@BOLT_VERSION@' )
+        integer (kind=omp_integer_kind), parameter :: bolt_numversion = @BOLT_NUMVERSION@
+        character(*)               bolt_release_date
+        parameter( bolt_release_date = '@BOLT_RELEASE_DATE@' )
+
         integer (kind=omp_integer_kind), parameter :: openmp_version    = @LIBOMP_OMP_YEAR_MONTH@
         integer (kind=omp_integer_kind), parameter :: kmp_version_major = @LIBOMP_VERSION_MAJOR@
         integer (kind=omp_integer_kind), parameter :: kmp_version_minor = @LIBOMP_VERSION_MINOR@

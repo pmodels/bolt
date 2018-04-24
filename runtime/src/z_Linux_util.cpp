@@ -79,11 +79,13 @@ static int __kmp_init_runtime = FALSE;
 
 static int __kmp_fork_count = 0;
 
+#if !KMP_USE_ABT
 static pthread_condattr_t __kmp_suspend_cond_attr;
 static pthread_mutexattr_t __kmp_suspend_mutex_attr;
 
 static kmp_cond_align_t __kmp_wait_cv;
 static kmp_mutex_align_t __kmp_wait_mx;
+#endif
 
 kmp_uint64 __kmp_ticks_per_msec = 1000000;
 
@@ -93,6 +95,19 @@ static void __kmp_print_cond(char *buffer, kmp_cond_align_t *cond) {
                cond->c_cond.__c_lock.__status, cond->c_cond.__c_lock.__spinlock,
                cond->c_cond.__c_waiting);
 }
+#endif
+
+#if KMP_USE_ABT
+
+static ABT_pool __kmp_abt_get_pool(int gtid);
+static ABT_pool __kmp_abt_get_my_pool(int gtid);
+static int __kmp_abt_sched_init(ABT_sched sched, ABT_sched_config config);
+static void __kmp_abt_sched_run_es0(ABT_sched sched);
+static void __kmp_abt_sched_run(ABT_sched sched);
+static int __kmp_abt_sched_free(ABT_sched sched);
+static void __kmp_abt_initialize(void);
+static void __kmp_abt_finalize(void);
+
 #endif
 
 #if (KMP_OS_LINUX && KMP_AFFINITY_SUPPORTED)
@@ -288,6 +303,10 @@ void __kmp_affinity_determine_capable(const char *env_var) {
 #if KMP_USE_FUTEX
 
 int __kmp_futex_determine_capable() {
+#if KMP_USE_ABT
+  int retval = 0; // Not supported.
+  return retval;
+#else
   int loc = 0;
   int rc = syscall(__NR_futex, &loc, FUTEX_WAKE, 1, NULL, NULL, 0);
   int retval = (rc == 0) || (errno != ENOSYS);
@@ -298,6 +317,7 @@ int __kmp_futex_determine_capable() {
                 retval ? "" : " not"));
 
   return retval;
+#endif
 }
 
 #endif // KMP_USE_FUTEX
@@ -491,6 +511,8 @@ static kmp_int32 __kmp_set_stack_info(int gtid, kmp_info_t *th) {
   return FALSE;
 }
 
+#if !KMP_USE_ABT
+
 static void *__kmp_launch_worker(void *thr) {
   int status, old_type, old_state;
 #ifdef KMP_BLOCK_SIGNALS
@@ -565,6 +587,70 @@ static void *__kmp_launch_worker(void *thr) {
 
   return exit_val;
 }
+
+#else // !KMP_USE_ABT
+
+static void __kmp_abt_launch_worker(void *thr) {
+  int status, old_type, old_state;
+  int gtid;
+  kmp_info_t *this_thr = (kmp_info_t *)thr;
+  kmp_team_t *(*volatile pteam);
+
+  gtid = this_thr->th.th_info.ds.ds_gtid;
+  KMP_DEBUG_ASSERT(this_thr == __kmp_threads[gtid]);
+
+#if KMP_AFFINITY_SUPPORTED
+  __kmp_affinity_set_init_mask(gtid, FALSE);
+#endif
+
+  KMP_MB();
+
+  pteam = (kmp_team_t *(*))(& this_thr->th.th_team);
+  if (__kmp_tasking_mode != tskm_immediate_exec) {
+    // It is originally set up in task_team_sync()
+    this_thr->th.th_task_team = (*pteam)->t.t_task_team
+                                [this_thr->th.th_task_state];
+  }
+  if (TCR_SYNC_PTR(*pteam) && !TCR_4(__kmp_global.g.g_done)) {
+    /* run our new task */
+    if (TCR_SYNC_PTR((*pteam)->t.t_pkfn) != NULL) {
+      int rc;
+      KA_TRACE(20, ("__kmp_abt_launch_worker: T#%d(%d:%d) "
+                    "invoke microtask = %p\n",
+                    gtid, (*pteam)->t.t_id, __kmp_tid_from_gtid(gtid),
+                    (*pteam)->t.t_pkfn));
+      //updateHWFPControl (*pteam);
+      KMP_STOP_DEVELOPER_EXPLICIT_TIMER(USER_launch_thread_loop);
+      {
+          KMP_TIME_DEVELOPER_BLOCK(USER_worker_invoke);
+          rc = (*pteam)->t.t_invoke(gtid);
+      }
+      KMP_START_DEVELOPER_EXPLICIT_TIMER(USER_launch_thread_loop);
+      KMP_ASSERT(rc);
+      KMP_MB();
+      KA_TRACE(20, ("__kmp_abt_launch_worker: T#%d(%d:%d) "
+                    "done microtask = %p\n",
+                    gtid, (*pteam)->t.t_id, __kmp_tid_from_gtid(gtid),
+                    (*pteam)->t.t_pkfn));
+    }
+  }
+
+  KA_TRACE(10, ("__kmp_abt_launch_worker: T#%d done\n", gtid));
+
+  __kmp_abt_wait_child_tasks(this_thr, FALSE);
+  this_thr->th.th_task_team = NULL;
+
+  /* Below is for the implicit task */
+  kmp_taskdata_t *td = this_thr->th.th_current_task;
+  if (td->td_task_queue) {
+    KMP_DEBUG_ASSERT(td->td_tq_cur_size == 0);
+    KMP_INTERNAL_FREE(td->td_task_queue);
+    td->td_task_queue = NULL;
+    td->td_tq_max_size = 0;
+  }
+}
+
+#endif // !KMP_USE_ABT
 
 #if KMP_USE_MONITOR
 /* The monitor thread controls all of the threads in the complex */
@@ -766,11 +852,22 @@ static void *__kmp_launch_monitor(void *thr) {
 #endif // KMP_USE_MONITOR
 
 void __kmp_create_worker(int gtid, kmp_info_t *th, size_t stack_size) {
+#if KMP_USE_ABT
+  ABT_thread handle;
+  ABT_thread_attr thread_attr;
+  ABT_pool tar_pool;
+#else
   pthread_t handle;
   pthread_attr_t thread_attr;
+#endif
   int status;
 
+#if KMP_USE_ABT
+  // [SM] th->th.th_info.ds.ds_gtid is setup in __kmp_allocate_thread
+  KMP_DEBUG_ASSERT(th->th.th_info.ds.ds_gtid == gtid);
+#else
   th->th.th_info.ds.ds_gtid = gtid;
+#endif
 
 #if KMP_STATS_ENABLED
   // sets up worker thread stats
@@ -791,6 +888,10 @@ void __kmp_create_worker(int gtid, kmp_info_t *th, size_t stack_size) {
 
 #endif // KMP_STATS_ENABLED
 
+#if KMP_USE_ABT
+  // uber thread is created in __kmp_abt_create_uber().
+  KMP_DEBUG_ASSERT(!KMP_UBER_GTID(gtid));
+#else
   if (KMP_UBER_GTID(gtid)) {
     KA_TRACE(10, ("__kmp_create_worker: uber thread (%d)\n", gtid));
     th->th.th_info.ds.ds_thread = pthread_self();
@@ -798,11 +899,29 @@ void __kmp_create_worker(int gtid, kmp_info_t *th, size_t stack_size) {
     __kmp_check_stack_overlap(th);
     return;
   }
+#endif
 
   KA_TRACE(10, ("__kmp_create_worker: try to create thread (%d)\n", gtid));
 
   KMP_MB(); /* Flush all pending memory write invalidates.  */
 
+#if KMP_USE_ABT
+#ifdef KMP_THREAD_ATTR
+  status = ABT_thread_attr_create(&thread_attr);
+  if (status != ABT_SUCCESS) {
+    __kmp_msg(kmp_ms_fatal, KMP_MSG(CantInitThreadAttrs), KMP_ERR(status),
+              __kmp_msg_null);
+  }; // if
+  status = ABT_thread_attr_set_stacksize(thread_attr, stack_size);
+  if (status != ABT_SUCCESS) {
+    __kmp_msg(kmp_ms_fatal, KMP_MSG(CantSetWorkerStackSize, stack_size),
+              KMP_ERR(status), KMP_HNT(ChangeWorkerStackSize),
+              __kmp_msg_null);
+  }; // if
+#else // KMP_THREAD_ATTR
+  thread_attr = ABT_THREAD_ATTR_NULL;
+#endif // KMP_THREAD_ATTR
+#else // KMP_USE_ABT
 #ifdef KMP_THREAD_ATTR
   status = pthread_attr_init(&thread_attr);
   if (status != 0) {
@@ -848,7 +967,25 @@ void __kmp_create_worker(int gtid, kmp_info_t *th, size_t stack_size) {
 #endif /* _POSIX_THREAD_ATTR_STACKSIZE */
 
 #endif /* KMP_THREAD_ATTR */
+#endif // KMP_USE_ABT
 
+#if KMP_USE_ABT
+  // If this new thread is for nested parallel region, the new thread is
+  // added to the shared pool of ES where the caller thread is running on.
+  if (th->th.th_team->t.t_level > 1) {
+    tar_pool = __kmp_abt_get_my_pool(gtid);
+  } else {
+    tar_pool = __kmp_abt_get_pool(gtid);
+  }
+  KA_TRACE(10, ("__kmp_create_worker: T#%d, nesting level=%d, "
+                "target pool=%p\n",
+                gtid, th->th.th_team->t.t_level, tar_pool));
+
+  status = ABT_thread_create(tar_pool, __kmp_abt_launch_worker, (void *)th,
+                             thread_attr, &handle);
+  KMP_ASSERT(status == ABT_SUCCESS);
+
+#else // KMP_USE_ABT
   status =
       pthread_create(&handle, &thread_attr, __kmp_launch_worker, (void *)th);
   if (status != 0 || !handle) { // ??? Why do we check handle??
@@ -868,9 +1005,16 @@ void __kmp_create_worker(int gtid, kmp_info_t *th, size_t stack_size) {
     }
     KMP_SYSFAIL("pthread_create", status);
   }
+#endif // KMP_USE_ABT
 
   th->th.th_info.ds.ds_thread = handle;
 
+#if KMP_USE_ABT
+#ifdef KMP_THREAD_ATTR
+  status = ABT_thread_attr_free(&thread_attr);
+  KMP_ASSERT(status == ABT_SUCCESS);
+#endif
+#else //KMP_USE_ABT
 #ifdef KMP_THREAD_ATTR
   status = pthread_attr_destroy(&thread_attr);
   if (status) {
@@ -881,7 +1025,9 @@ void __kmp_create_worker(int gtid, kmp_info_t *th, size_t stack_size) {
       __kmp_str_free(&err_code.str);
     }
   }
+
 #endif /* KMP_THREAD_ATTR */
+#endif // KMP_USE_ABT
 
   KMP_MB(); /* Flush all pending memory write invalidates.  */
 
@@ -889,8 +1035,65 @@ void __kmp_create_worker(int gtid, kmp_info_t *th, size_t stack_size) {
 
 } // __kmp_create_worker
 
+
+#if KMP_USE_ABT
+
+void __kmp_abt_revive_worker(kmp_info_t *th) {
+  int status;
+  int gtid;
+  ABT_pool tar_pool;
+
+  gtid = th->th.th_info.ds.ds_gtid;
+
+  if (th->th.th_team->t.t_level > 1) {
+    tar_pool = __kmp_abt_get_my_pool(gtid);
+  } else {
+    tar_pool = __kmp_abt_get_pool(gtid);
+  }
+
+  KA_TRACE(10, ("__kmp_abt_revive_worker: recreate T#%d\n", gtid));
+
+  KMP_MB(); /* Flush all pending memory write invalidates.  */
+
+  status = ABT_thread_revive(tar_pool, __kmp_abt_launch_worker, (void *)th,
+                             &th->th.th_info.ds.ds_thread);
+  KMP_ASSERT(status == ABT_SUCCESS);
+
+  KA_TRACE(10, ("__kmp_abt_revive_worker: done recreating T#%d\n", gtid));
+} // __kmp_abt_revive_worker
+
+void __kmp_abt_join_worker(kmp_info_t *th) {
+  int status;
+
+  KMP_MB(); /* Flush all pending memory write invalidates.  */
+
+  KA_TRACE(10, ("__kmp_abt_join_worker: try to join worker T#%d\n",
+                th->th.th_info.ds.ds_gtid) );
+
+#ifdef KMP_ABT_USE_TASKLET_TEAM
+  if (get__tasklet(th)) {
+    ABT_task ds_tasklet = th->th.th_info.ds.ds_tasklet;
+    status = ABT_task_join(ds_tasklet);
+    KMP_ASSERT(status == ABT_SUCCESS);
+  } else
+#endif // KMP_ABT_USE_TASKLET_TEAM
+  {
+    ABT_thread ds_thread = th->th.th_info.ds.ds_thread;
+    status = ABT_thread_join(ds_thread);
+    KMP_ASSERT(status == ABT_SUCCESS);
+  }
+
+  KA_TRACE(10, ("__kmp_abt_join_worker: done joining worker T#%d\n",
+                th->th.th_info.ds.ds_gtid));
+
+  KMP_MB();       /* Flush all pending memory write invalidates.  */
+} // __kmp_abt_join_worker
+
+#endif
+
 #if KMP_USE_MONITOR
 void __kmp_create_monitor(kmp_info_t *th) {
+#if !KMP_USE_ABT
   pthread_t handle;
   pthread_attr_t thread_attr;
   size_t size;
@@ -1026,18 +1229,25 @@ retry:
 
   KA_TRACE(10, ("__kmp_create_monitor: monitor created %#.8lx\n",
                 th->th.th_info.ds.ds_thread));
-
+#else // !KMP_USE_ABT
+  return; // Nothing to do
+#endif // !KMP_USE_ABT
 } // __kmp_create_monitor
 #endif // KMP_USE_MONITOR
 
 void __kmp_exit_thread(int exit_status) {
+#if KMP_USE_ABT
+  ABT_thread_exit();
+#else
   pthread_exit((void *)(intptr_t)exit_status);
+#endif
 } // __kmp_exit_thread
 
 #if KMP_USE_MONITOR
 void __kmp_resume_monitor();
 
 void __kmp_reap_monitor(kmp_info_t *th) {
+#if !KMP_USE_ABT
   int status;
   void *exit_val;
 
@@ -1078,6 +1288,9 @@ void __kmp_reap_monitor(kmp_info_t *th) {
                 th->th.th_info.ds.ds_thread));
 
   KMP_MB(); /* Flush all pending memory write invalidates.  */
+#else
+  return; // Nothing to do.
+#endif // !KMP_USE_ABT
 }
 #endif // KMP_USE_MONITOR
 
@@ -1090,6 +1303,19 @@ void __kmp_reap_worker(kmp_info_t *th) {
   KA_TRACE(
       10, ("__kmp_reap_worker: try to reap T#%d\n", th->th.th_info.ds.ds_gtid));
 
+#if KMP_USE_ABT
+  ABT_thread ds_thread = th->th.th_info.ds.ds_thread;
+  if (ds_thread != ABT_THREAD_NULL) {
+    status = ABT_thread_free(&ds_thread);
+    KMP_ASSERT(status == ABT_SUCCESS);
+  }
+
+  ABT_task ds_tasklet = th->th.th_info.ds.ds_tasklet;
+  if (ds_tasklet != ABT_TASK_NULL) {
+    status = ABT_task_free(&ds_tasklet);
+    KMP_ASSERT(status == ABT_SUCCESS);
+  }
+#else // KMP_USE_ABT
   status = pthread_join(th->th.th_info.ds.ds_thread, &exit_val);
 #ifdef KMP_DEBUG
   /* Don't expose these to the user until we understand when they trigger */
@@ -1102,6 +1328,7 @@ void __kmp_reap_worker(kmp_info_t *th) {
                   th->th.th_info.ds.ds_gtid, exit_val));
   }
 #endif /* KMP_DEBUG */
+#endif // KMP_USE_ABT
 
   KA_TRACE(10, ("__kmp_reap_worker: done reaping T#%d\n",
                 th->th.th_info.ds.ds_gtid));
@@ -1351,16 +1578,23 @@ void __kmp_register_atfork(void) {
 }
 
 void __kmp_suspend_initialize(void) {
+#if KMP_USE_ABT
+  /* BOLT does not need to initialize them. */
+#else
   int status;
   status = pthread_mutexattr_init(&__kmp_suspend_mutex_attr);
   KMP_CHECK_SYSFAIL("pthread_mutexattr_init", status);
   status = pthread_condattr_init(&__kmp_suspend_cond_attr);
   KMP_CHECK_SYSFAIL("pthread_condattr_init", status);
+#endif
 }
 
 static void __kmp_suspend_initialize_thread(kmp_info_t *th) {
   ANNOTATE_HAPPENS_AFTER(&th->th.th_suspend_init_count);
   if (th->th.th_suspend_init_count <= __kmp_fork_count) {
+#if KMP_USE_ABT
+  /* BOLT does not need to initialize them. */
+#else
     /* this means we haven't initialized the suspension pthread objects for this
        thread in this instance of the process */
     int status;
@@ -1370,6 +1604,7 @@ static void __kmp_suspend_initialize_thread(kmp_info_t *th) {
     status = pthread_mutex_init(&th->th.th_suspend_mx.m_mutex,
                                 &__kmp_suspend_mutex_attr);
     KMP_CHECK_SYSFAIL("pthread_mutex_init", status);
+#endif
     *(volatile int *)&th->th.th_suspend_init_count = __kmp_fork_count + 1;
     ANNOTATE_HAPPENS_BEFORE(&th->th.th_suspend_init_count);
   }
@@ -1377,6 +1612,9 @@ static void __kmp_suspend_initialize_thread(kmp_info_t *th) {
 
 void __kmp_suspend_uninitialize_thread(kmp_info_t *th) {
   if (th->th.th_suspend_init_count > __kmp_fork_count) {
+#if KMP_USE_ABT
+  /* BOLT does not need to free them. */
+#else
     /* this means we have initialize the suspension pthread objects for this
        thread in this instance of the process */
     int status;
@@ -1389,11 +1627,13 @@ void __kmp_suspend_uninitialize_thread(kmp_info_t *th) {
     if (status != 0 && status != EBUSY) {
       KMP_SYSFAIL("pthread_mutex_destroy", status);
     }
+#endif
     --th->th.th_suspend_init_count;
     KMP_DEBUG_ASSERT(th->th.th_suspend_init_count == __kmp_fork_count);
   }
 }
 
+#if !KMP_USE_ABT
 /* This routine puts the calling thread to sleep after setting the
    sleep bit for the indicated flag variable to true. */
 template <class C>
@@ -1645,6 +1885,7 @@ void __kmp_resume_monitor() {
                 gtid, KMP_GTID_MONITOR));
 }
 #endif // KMP_USE_MONITOR
+#endif // !KMP_USE_ABT
 
 void __kmp_yield(int cond) {
   if (!cond)
@@ -1656,10 +1897,32 @@ void __kmp_yield(int cond) {
   if (__kmp_yield_cycle && !KMP_YIELD_NOW())
     return;
 #endif
+#if KMP_USE_ABT
+  ABT_thread_yield();
+#else
   sched_yield();
+#endif
 }
 
 void __kmp_gtid_set_specific(int gtid) {
+#if KMP_USE_ABT
+  ABT_thread self;
+  kmp_info_t *th;
+  KMP_ASSERT(__kmp_init_runtime);
+
+  ABT_thread_self(&self);
+  if (self == ABT_THREAD_NULL) {
+    KMP_ASSERT(__kmp_init_gtid);
+    int status;
+    status = pthread_setspecific(__kmp_gtid_pth_threadprivate_key,
+                                 (void *)(intptr_t)(gtid + 1));
+    KMP_CHECK_SYSFAIL("pthread_setspecific", status);
+  } else {
+    ABT_thread_get_arg(self, (void **)&th);
+    KMP_ASSERT(th != NULL);
+    th->th.th_info.ds.ds_gtid = gtid;
+  }
+#else // KMP_USE_ABT
   if (__kmp_init_gtid) {
     int status;
     status = pthread_setspecific(__kmp_gtid_threadprivate_key,
@@ -1668,10 +1931,31 @@ void __kmp_gtid_set_specific(int gtid) {
   } else {
     KA_TRACE(50, ("__kmp_gtid_set_specific: runtime shutdown, returning\n"));
   }
+#endif // KMP_USE_ABT
 }
 
 int __kmp_gtid_get_specific() {
   int gtid;
+#if KMP_USE_ABT
+  ABT_thread self;
+  kmp_info_t *th;
+  ABT_thread_self(&self);
+  if (self == ABT_THREAD_NULL) {
+    KMP_ASSERT(__kmp_init_gtid);
+    /* External threads might call OpenMP functions. */
+    gtid = (int)(size_t)pthread_getspecific(__kmp_gtid_pth_threadprivate_key);
+    KA_TRACE(50, ("__kmp_gtid_get_specific: key:%d gtid:%d\n",
+                  __kmp_gtid_pth_threadprivate_key, gtid));
+  } else {
+    ABT_thread_get_arg(self, (void **)&th);
+    if (th == NULL) {
+      gtid = KMP_GTID_DNE;
+    } else {
+      gtid = th->th.th_info.ds.ds_gtid;
+    }
+    KA_TRACE(50, ("__kmp_gtid_get_specific: ULT:%p gtid:%d\n", self, gtid));
+  }
+#else // KMP_USE_ABT
   if (!__kmp_init_gtid) {
     KA_TRACE(50, ("__kmp_gtid_get_specific: runtime shutdown, returning "
                   "KMP_GTID_SHUTDOWN\n"));
@@ -1685,6 +1969,7 @@ int __kmp_gtid_get_specific() {
   }
   KA_TRACE(50, ("__kmp_gtid_get_specific: key:%d gtid:%d\n",
                 __kmp_gtid_threadprivate_key, gtid));
+#endif // KMP_USE_ABT
   return gtid;
 }
 
@@ -1836,6 +2121,12 @@ void __kmp_runtime_initialize(void) {
   /* Set up minimum number of threads to switch to TLS gtid */
   __kmp_tls_gtid_min = KMP_TLS_GTID_MIN;
 
+#if KMP_USE_ABT
+  status = pthread_key_create(&__kmp_gtid_pth_threadprivate_key,
+                              __kmp_internal_end_dest);
+  KMP_CHECK_SYSFAIL("pthread_key_create", status);
+  __kmp_abt_initialize();
+#else // KMP_USE_ABT
   status = pthread_key_create(&__kmp_gtid_threadprivate_key,
                               __kmp_internal_end_dest);
   KMP_CHECK_SYSFAIL("pthread_key_create", status);
@@ -1847,6 +2138,7 @@ void __kmp_runtime_initialize(void) {
   KMP_CHECK_SYSFAIL("pthread_condattr_init", status);
   status = pthread_cond_init(&__kmp_wait_cv.c_cond, &cond_attr);
   KMP_CHECK_SYSFAIL("pthread_cond_init", status);
+#endif // KMP_USE_ABT
 #if USE_ITT_BUILD
   __kmp_itt_initialize();
 #endif /* USE_ITT_BUILD */
@@ -1865,6 +2157,11 @@ void __kmp_runtime_destroy(void) {
   __kmp_itt_destroy();
 #endif /* USE_ITT_BUILD */
 
+#if KMP_USE_ABT
+  __kmp_abt_finalize();
+  status = pthread_key_delete(__kmp_gtid_pth_threadprivate_key);
+  KMP_CHECK_SYSFAIL("pthread_key_delete", status);
+#else // KMP_USE_ABT
   status = pthread_key_delete(__kmp_gtid_threadprivate_key);
   KMP_CHECK_SYSFAIL("pthread_key_delete", status);
 
@@ -1876,6 +2173,7 @@ void __kmp_runtime_destroy(void) {
   if (status != 0 && status != EBUSY) {
     KMP_SYSFAIL("pthread_cond_destroy", status);
   }
+#endif // KMP_USE_ABT
 #if KMP_AFFINITY_SUPPORTED
   __kmp_affinity_uninitialize();
 #endif
@@ -2267,6 +2565,255 @@ finish: // Clean up and exit.
 
 #endif // USE_LOAD_BALANCE
 
+#if KMP_USE_ABT
+
+// The Argobots version always serializes microtasks.
+#if 0
+max_nargs = 32 # should be less than 100
+for nargs in range(0, max_nargs + 1):
+    case_code = "  case " + str(nargs) + ":\n"
+    base = "    (*pkfn)(&gtid, &tid"
+    case_code += base
+    for index in range(0, nargs):
+        if index > 0 and index % 4 == 0:
+            case_code += "\n" + (" " * len(base))
+        case_code += ", " + "p_argv[" + str(index) +"]"
+    case_code += ");\n"
+    case_code += "    break;"
+    print case_code
+#endif
+
+extern "C" int
+__kmp_invoke_microtask( microtask_t pkfn,
+                        int gtid, int tid,
+                        int argc, void *p_argv[]
+#if OMPT_SUPPORT
+                        , void **exit_frame_ptr
+#endif
+) {
+  switch (argc) {
+  default:
+    fprintf(stderr, "Too many args to microtask: %d!\n", argc);
+    fflush(stderr);
+    exit(-1);
+  case 0:
+    (*pkfn)(&gtid, &tid);
+    break;
+  case 1:
+    (*pkfn)(&gtid, &tid, p_argv[0]);
+    break;
+  case 2:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1]);
+    break;
+  case 3:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2]);
+    break;
+  case 4:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]);
+    break;
+  case 5:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4]);
+    break;
+  case 6:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5]);
+    break;
+  case 7:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6]);
+    break;
+  case 8:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]);
+    break;
+  case 9:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8]);
+    break;
+  case 10:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9]);
+    break;
+  case 11:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10]);
+    break;
+  case 12:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]);
+    break;
+  case 13:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12]);
+    break;
+  case 14:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12], p_argv[13]);
+    break;
+  case 15:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12], p_argv[13], p_argv[14]);
+    break;
+  case 16:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12], p_argv[13], p_argv[14], p_argv[15]);
+    break;
+  case 17:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12], p_argv[13], p_argv[14], p_argv[15]
+                       , p_argv[16]);
+    break;
+  case 18:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12], p_argv[13], p_argv[14], p_argv[15]
+                       , p_argv[16], p_argv[17]);
+    break;
+  case 19:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12], p_argv[13], p_argv[14], p_argv[15]
+                       , p_argv[16], p_argv[17], p_argv[18]);
+    break;
+  case 20:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12], p_argv[13], p_argv[14], p_argv[15]
+                       , p_argv[16], p_argv[17], p_argv[18], p_argv[19]);
+    break;
+  case 21:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12], p_argv[13], p_argv[14], p_argv[15]
+                       , p_argv[16], p_argv[17], p_argv[18], p_argv[19]
+                       , p_argv[20]);
+    break;
+  case 22:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12], p_argv[13], p_argv[14], p_argv[15]
+                       , p_argv[16], p_argv[17], p_argv[18], p_argv[19]
+                       , p_argv[20], p_argv[21]);
+    break;
+  case 23:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12], p_argv[13], p_argv[14], p_argv[15]
+                       , p_argv[16], p_argv[17], p_argv[18], p_argv[19]
+                       , p_argv[20], p_argv[21], p_argv[22]);
+    break;
+  case 24:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12], p_argv[13], p_argv[14], p_argv[15]
+                       , p_argv[16], p_argv[17], p_argv[18], p_argv[19]
+                       , p_argv[20], p_argv[21], p_argv[22], p_argv[23]);
+    break;
+  case 25:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12], p_argv[13], p_argv[14], p_argv[15]
+                       , p_argv[16], p_argv[17], p_argv[18], p_argv[19]
+                       , p_argv[20], p_argv[21], p_argv[22], p_argv[23]
+                       , p_argv[24]);
+    break;
+  case 26:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12], p_argv[13], p_argv[14], p_argv[15]
+                       , p_argv[16], p_argv[17], p_argv[18], p_argv[19]
+                       , p_argv[20], p_argv[21], p_argv[22], p_argv[23]
+                       , p_argv[24], p_argv[25]);
+    break;
+  case 27:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12], p_argv[13], p_argv[14], p_argv[15]
+                       , p_argv[16], p_argv[17], p_argv[18], p_argv[19]
+                       , p_argv[20], p_argv[21], p_argv[22], p_argv[23]
+                       , p_argv[24], p_argv[25], p_argv[26]);
+    break;
+  case 28:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12], p_argv[13], p_argv[14], p_argv[15]
+                       , p_argv[16], p_argv[17], p_argv[18], p_argv[19]
+                       , p_argv[20], p_argv[21], p_argv[22], p_argv[23]
+                       , p_argv[24], p_argv[25], p_argv[26], p_argv[27]);
+    break;
+  case 29:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12], p_argv[13], p_argv[14], p_argv[15]
+                       , p_argv[16], p_argv[17], p_argv[18], p_argv[19]
+                       , p_argv[20], p_argv[21], p_argv[22], p_argv[23]
+                       , p_argv[24], p_argv[25], p_argv[26], p_argv[27]
+                       , p_argv[28]);
+    break;
+  case 30:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12], p_argv[13], p_argv[14], p_argv[15]
+                       , p_argv[16], p_argv[17], p_argv[18], p_argv[19]
+                       , p_argv[20], p_argv[21], p_argv[22], p_argv[23]
+                       , p_argv[24], p_argv[25], p_argv[26], p_argv[27]
+                       , p_argv[28], p_argv[29]);
+    break;
+  case 31:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12], p_argv[13], p_argv[14], p_argv[15]
+                       , p_argv[16], p_argv[17], p_argv[18], p_argv[19]
+                       , p_argv[20], p_argv[21], p_argv[22], p_argv[23]
+                       , p_argv[24], p_argv[25], p_argv[26], p_argv[27]
+                       , p_argv[28], p_argv[29], p_argv[30]);
+    break;
+  case 32:
+    (*pkfn)(&gtid, &tid, p_argv[0], p_argv[1], p_argv[2], p_argv[3]
+                       , p_argv[4], p_argv[5], p_argv[6], p_argv[7]
+                       , p_argv[8], p_argv[9], p_argv[10], p_argv[11]
+                       , p_argv[12], p_argv[13], p_argv[14], p_argv[15]
+                       , p_argv[16], p_argv[17], p_argv[18], p_argv[19]
+                       , p_argv[20], p_argv[21], p_argv[22], p_argv[23]
+                       , p_argv[24], p_argv[25], p_argv[26], p_argv[27]
+                       , p_argv[28], p_argv[29], p_argv[30], p_argv[31]);
+    break;
+  }
+
+  return 1;
+}
+
+#else // !MP_USE_ABT
+
 #if !(KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_MIC ||                            \
       ((KMP_OS_LINUX || KMP_OS_DARWIN) && KMP_ARCH_AARCH64) || KMP_ARCH_PPC64)
 
@@ -2360,5 +2907,707 @@ int __kmp_invoke_microtask(microtask_t pkfn, int gtid, int tid, int argc,
 }
 
 #endif
+
+#endif // KMP_USE_ABT
+
+#if KMP_USE_ABT
+
+
+typedef struct kmp_abt {
+  ABT_xstream *xstream;
+  ABT_sched *sched;
+  ABT_pool *priv_pool;
+  ABT_pool *shared_pool;
+  int num_xstreams;
+  int num_pools;
+} kmp_abt_t;
+
+static kmp_abt_t *__kmp_abt = NULL;
+
+static inline ABT_pool __kmp_abt_get_pool(int gtid) {
+  KMP_DEBUG_ASSERT(__kmp_abt != NULL);
+  KMP_DEBUG_ASSERT(gtid >= 0);
+
+#ifdef ABT_USE_PRIVATE_POOLS
+  if (gtid < __kmp_abt->num_xstreams) {
+    return __kmp_abt->priv_pool[gtid];
+  } else {
+    int eid = gtid % __kmp_abt->num_xstreams;
+    return __kmp_abt->shared_pool[eid];
+  }
+#else /* ABT_USE_PRIVATE_POOLS */
+  int eid = gtid % __kmp_abt->num_xstreams;
+  return __kmp_abt->shared_pool[eid];
+#endif /* ABT_USE_PRIVATE_POOLS */
+}
+
+static inline ABT_pool __kmp_abt_get_my_pool(int gtid) {
+  int eid;
+  if (gtid < __kmp_abt->num_xstreams) {
+    return __kmp_abt->shared_pool[gtid];
+  } else {
+    ABT_xstream_self_rank(&eid);
+    return __kmp_abt->shared_pool[eid];
+  }
+}
+
+void __kmp_abt_release_info(kmp_info_t *th) {
+  KMP_DEBUG_ASSERT(th->th.th_active == TRUE);
+  TCW_4(th->th.th_active, FALSE);
+}
+
+void __kmp_abt_acquire_info_for_task(kmp_info_t *th,
+                                     kmp_taskdata_t *taskdata) {
+  while (KMP_COMPARE_AND_STORE_RET32(&th->th.th_active, FALSE, TRUE)!= FALSE) {
+    ABT_thread_yield();
+  }
+  th->th.th_current_task = taskdata;
+}
+void __kmp_abt_set_self_info(kmp_info_t *th) {
+  ABT_thread self;
+
+  KMP_ASSERT(__kmp_init_runtime);
+  ABT_thread_self(&self);
+  if (self == ABT_THREAD_NULL) {
+    KMP_ASSERT(__kmp_init_gtid);
+    /* External threads might call OpenMP functions. */
+    int gtid = (size_t)pthread_getspecific(__kmp_gtid_pth_threadprivate_key);
+    KA_TRACE(50, ("__kmp_gtid_get_specific: key:%d gtid:%d\n",
+                  __kmp_gtid_pth_threadprivate_key, gtid));
+    __kmp_threads[gtid] = th;
+  } else {
+    int ret = ABT_thread_set_arg(self, (void *)th);
+    KMP_ASSERT(ret == ABT_SUCCESS);
+  }
+}
+
+kmp_info_t *__kmp_abt_get_self_info(void) {
+  ABT_thread self;
+
+  KMP_ASSERT(__kmp_init_runtime);
+  ABT_thread_self(&self);
+  if (self == ABT_THREAD_NULL) {
+    KMP_ASSERT(__kmp_init_gtid);
+    /* External threads might call OpenMP functions. */
+    int gtid = (size_t)pthread_getspecific(__kmp_gtid_pth_threadprivate_key);
+    KA_TRACE(50, ("__kmp_gtid_get_specific: key:%d gtid:%d\n",
+                  __kmp_gtid_pth_threadprivate_key, gtid));
+    return __kmp_threads[gtid];
+  } else {
+    kmp_info_t *th;
+    int ret = ABT_thread_get_arg(self, (void **)&th);
+    KMP_ASSERT(th != NULL);
+    KMP_ASSERT(ret == ABT_SUCCESS);
+    return th;
+  }
+}
+
+static void __kmp_abt_initialize(void) {
+  int status;
+  char *env;
+
+  int num_xstreams, num_pools;
+  int i, k;
+
+  env = getenv("KMP_ABT_NUM_ESS");
+  if (env) {
+    num_xstreams = atoi(env);
+    if (num_xstreams < __kmp_xproc) __kmp_xproc = num_xstreams;
+  } else {
+    num_xstreams = __kmp_xproc;
+  }
+  num_pools = num_xstreams;
+  KA_TRACE(10, ("__kmp_abt_initialize: # of ESs = %d\n", num_xstreams));
+
+  __kmp_abt = (kmp_abt_t *)__kmp_allocate(sizeof(kmp_abt_t));
+  __kmp_abt->xstream = (ABT_xstream *)__kmp_allocate(num_xstreams
+                                                     * sizeof(ABT_xstream));
+  __kmp_abt->sched = (ABT_sched *)__kmp_allocate(num_xstreams
+                                                 * sizeof(ABT_sched));
+  __kmp_abt->priv_pool = (ABT_pool *)__kmp_allocate(num_pools
+                                                    * sizeof(ABT_pool));
+  __kmp_abt->shared_pool = (ABT_pool *)__kmp_allocate(num_pools
+                                                      * sizeof(ABT_pool));
+  __kmp_abt->num_xstreams = num_xstreams;
+  __kmp_abt->num_pools = num_pools;
+
+  /* Create private pools */
+#ifdef ABT_USE_PRIVATE_POOLS
+  for (i = 0; i < num_xstreams; i++) {
+    status = ABT_pool_create_basic(ABT_POOL_FIFO, ABT_POOL_ACCESS_MPSC,
+                                   ABT_TRUE, &__kmp_abt->priv_pool[i]);
+    KMP_CHECK_SYSFAIL("ABT_pool_create_basic", status);
+
+    status = ABT_pool_create_basic(ABT_POOL_FIFO, ABT_POOL_ACCESS_MPMC,
+                                   ABT_TRUE, &__kmp_abt->shared_pool[i]);
+    KMP_CHECK_SYSFAIL("ABT_pool_create_basic", status);
+  }
+#else /* ABT_USE_PRIVATE_POOLS */
+  /* NOTE: We create only one private pool for ES0. */
+  status = ABT_pool_create_basic(ABT_POOL_FIFO, ABT_POOL_ACCESS_MPSC, ABT_TRUE,
+                                 &__kmp_abt->priv_pool[0]);
+  KMP_CHECK_SYSFAIL("ABT_pool_create_basic", status);
+
+  for (i = 0; i < num_xstreams; i++) {
+    status = ABT_pool_create_basic(ABT_POOL_FIFO, ABT_POOL_ACCESS_MPMC,
+                                   ABT_TRUE, &__kmp_abt->shared_pool[i]);
+    KMP_CHECK_SYSFAIL( "ABT_pool_create_basic", status );
+  }
+#endif /* ABT_USE_PRIVATE_POOLS */
+
+  /* Create a scheduler for ES0 */
+  ABT_sched_config_var cv_freq = {
+    .idx = 0,
+    .type = ABT_SCHED_CONFIG_INT
+  };
+
+  ABT_sched_config config;
+  int freq = (num_xstreams < 100) ? 100 : num_xstreams;
+  ABT_sched_config_create(&config, cv_freq, freq, ABT_sched_config_var_end);
+
+  ABT_sched_def sched_def = {
+    .type = ABT_SCHED_TYPE_ULT,
+    .init = __kmp_abt_sched_init,
+    .run = __kmp_abt_sched_run_es0,
+    .free = __kmp_abt_sched_free,
+    .get_migr_pool = NULL
+  };
+
+  ABT_pool *my_pools = (ABT_pool *)malloc((num_xstreams + 1)
+                                          * sizeof(ABT_pool));
+  my_pools[0] = __kmp_abt->priv_pool[0];
+  for (k = 0; k < num_xstreams; k++) {
+    my_pools[k+1] = __kmp_abt->shared_pool[k];
+  }
+  status = ABT_sched_create(&sched_def, num_xstreams+1, my_pools, config,
+                            &__kmp_abt->sched[0]);
+  KMP_CHECK_SYSFAIL("ABT_sched_create", status);
+
+  /* Create schedulers for other ESs */
+  sched_def.run = __kmp_abt_sched_run;
+#ifdef ABT_USE_PRIVATE_POOLS
+  for (i = 1; i < num_xstreams; i++) {
+    my_pools[0] = __kmp_abt->priv_pool[i];
+    for (k = 0; k < num_xstreams; k++) {
+      my_pools[k+1] = __kmp_abt->shared_pool[(i + k) % num_xstreams];
+    }
+    status = ABT_sched_create(&sched_def, num_xstreams+1, my_pools,
+                              config, &__kmp_abt->sched[i]);
+    KMP_CHECK_SYSFAIL("ABT_sched_create", status);
+  }
+#else /* ABT_USE_PRIVATE_POOLS */
+  for (i = 1; i < num_xstreams; i++) {
+    for (k = 0; k < num_xstreams; k++) {
+      my_pools[k] = __kmp_abt->shared_pool[(i + k) % num_xstreams];
+    }
+    status = ABT_sched_create(&sched_def, num_xstreams, my_pools,
+                              config, &__kmp_abt->sched[i]);
+    KMP_CHECK_SYSFAIL("ABT_sched_create", status);
+  }
+#endif /* ABT_USE_PRIVATE_POOLS */
+
+  free(my_pools);
+  ABT_sched_config_free(&config);
+
+  /* Create ESs */
+  status = ABT_xstream_self(&__kmp_abt->xstream[0]);
+  KMP_CHECK_SYSFAIL("ABT_xstream_self", status);
+  status = ABT_xstream_set_main_sched(__kmp_abt->xstream[0],
+                                      __kmp_abt->sched[0]);
+  KMP_CHECK_SYSFAIL("ABT_xstream_set_main_sched", status);
+  for (i = 1; i < num_xstreams; i++) {
+    status = ABT_xstream_create(__kmp_abt->sched[i], &__kmp_abt->xstream[i]);
+    KMP_CHECK_SYSFAIL("ABT_xstream_create", status);
+  }
+}
+
+static void __kmp_abt_finalize(void) {
+  int status;
+  int i;
+
+  for (i = 1; i < __kmp_abt->num_xstreams; i++) {
+    status = ABT_xstream_join(__kmp_abt->xstream[i]);
+    KMP_CHECK_SYSFAIL("ABT_xstream_join", status);
+    status = ABT_xstream_free(&__kmp_abt->xstream[i]);
+    KMP_CHECK_SYSFAIL("ABT_xstream_free", status);
+  }
+
+  /* Free schedulers */
+  for (i = 1; i < __kmp_abt->num_xstreams; i++) {
+    status = ABT_sched_free(&__kmp_abt->sched[i]);
+    KMP_CHECK_SYSFAIL("ABT_sched_free", status);
+  }
+
+  __kmp_free(__kmp_abt->xstream);
+  __kmp_free(__kmp_abt->sched);
+  __kmp_free(__kmp_abt->priv_pool);
+  __kmp_free(__kmp_abt->shared_pool);
+  __kmp_free(__kmp_abt);
+  __kmp_abt = NULL;
+}
+
+typedef struct {
+  uint32_t event_freq;
+} __kmp_abt_sched_data_t;
+
+static int __kmp_abt_sched_init(ABT_sched sched, ABT_sched_config config) {
+  __kmp_abt_sched_data_t *p_data = (__kmp_abt_sched_data_t *)
+                                   calloc(1, sizeof(__kmp_abt_sched_data_t));
+  ABT_sched_config_read(config, 1, &p_data->event_freq);
+  ABT_sched_set_data(sched, (void *)p_data);
+  return ABT_SUCCESS;
+}
+
+static void __kmp_abt_sched_run_es0(ABT_sched sched) {
+  uint32_t work_count = 0;
+  __kmp_abt_sched_data_t *p_data;
+  int num_pools;
+  ABT_pool *pools;
+  ABT_unit unit;
+  int target;
+  ABT_bool stop;
+  unsigned seed = time(NULL);
+  size_t size;
+
+#ifdef ABT_USE_SCHED_SLEEP
+  struct timespec sleep_time;
+  sleep_time.tv_sec = 0;
+  sleep_time.tv_nsec = 128;
+#endif
+
+  ABT_sched_get_data(sched, (void **)&p_data);
+  ABT_sched_get_num_pools(sched, &num_pools);
+  pools = (ABT_pool *)malloc(num_pools * sizeof(ABT_pool));
+  ABT_sched_get_pools(sched, num_pools, 0, pools);
+
+  int run_cnt = 0;
+  int sleep_cnt = 0;
+  while (1) {
+    run_cnt = 0;
+
+    /* Execute one work unit from the private pool */
+    ABT_pool_get_size(pools[0], &size);
+    if (size > 0) {
+      ABT_pool_pop(pools[0], &unit);
+      if (unit != ABT_UNIT_NULL) {
+        ABT_xstream_run_unit(unit, pools[0]);
+        run_cnt++;
+      }
+    }
+
+    /* shared pool */
+    ABT_pool_get_size(pools[1], &size);
+    if (size > 0) {
+      ABT_pool_pop(pools[1], &unit);
+      if (unit != ABT_UNIT_NULL) {
+        ABT_xstream_run_unit(unit, pools[1]);
+        run_cnt++;
+      }
+    }
+
+    if (run_cnt == 0 && num_pools > 2) {
+      /* Steal a work unit from other pools */
+      target = rand_r(&seed) % (num_pools - 2) + 2;
+      ABT_pool_get_size(pools[target], &size);
+      if (size > 0) {
+        ABT_pool_pop(pools[target], &unit);
+        if (unit != ABT_UNIT_NULL) {
+          ABT_unit_set_associated_pool(unit, pools[1]);
+          ABT_xstream_run_unit(unit, pools[1]);
+          run_cnt++;
+        }
+      }
+    }
+
+    if (++work_count >= p_data->event_freq) {
+      ABT_xstream_check_events(sched);
+      ABT_sched_has_to_stop(sched, &stop);
+      if (stop == ABT_TRUE)
+        break;
+      work_count = 0;
+#ifdef ABT_USE_SCHED_SLEEP
+      if (run_cnt == 0) {
+        sleep_cnt = 0;
+        nanosleep(&sleep_time, NULL);
+        if (sleep_time.tv_nsec < 1048576) {
+          sleep_time.tv_nsec <<= 2;
+        }
+      } else if (sleep_cnt == 8) {
+        sleep_cnt = 0;
+        nanosleep(&sleep_time, NULL);
+      } else {
+        sleep_time.tv_nsec = 128;
+        sleep_cnt++;
+        run_cnt = 0;
+      }
+#endif /* ABT_USE_SCHED_SLEEP */
+    }
+  }
+  free(pools);
+}
+
+static void __kmp_abt_sched_run(ABT_sched sched) {
+  uint32_t work_count = 0;
+  __kmp_abt_sched_data_t *p_data;
+  int num_pools;
+  ABT_pool *pools;
+  ABT_unit unit;
+  int target;
+  ABT_bool stop;
+  unsigned seed = time(NULL);
+  size_t size;
+
+#ifdef ABT_USE_SCHED_SLEEP
+  struct timespec sleep_time;
+  sleep_time.tv_sec = 0;
+  sleep_time.tv_nsec = 128;
+#endif
+
+  ABT_sched_get_data(sched, (void **)&p_data);
+  ABT_sched_get_num_pools(sched, &num_pools);
+  pools = (ABT_pool *)malloc(num_pools * sizeof(ABT_pool));
+  ABT_sched_get_pools(sched, num_pools, 0, pools);
+
+  int run_cnt = 0;
+  int sleep_cnt = 0;
+  while (1) {
+#ifdef ABT_USE_PRIVATE_POOLS
+    run_cnt = 0;
+
+    /* Execute one work unit from the private pool */
+    ABT_pool_get_size(pools[0], &size);
+    if (size > 0) {
+      ABT_pool_pop(pools[0], &unit);
+      if (unit != ABT_UNIT_NULL) {
+        ABT_xstream_run_unit(unit, pools[0]);
+        run_cnt++;
+      }
+    }
+
+    /* shared pool */
+    ABT_pool_get_size(pools[1], &size);
+    if (size > 0) {
+      ABT_pool_pop(pools[1], &unit);
+      if (unit != ABT_UNIT_NULL) {
+        ABT_xstream_run_unit(unit, pools[1]);
+        run_cnt++;
+      }
+    }
+
+    /* Steal a work unit from other pools */
+    if (run_cnt == 0) {
+      target = rand_r(&seed) % (num_pools-2) + 2;
+      ABT_pool_get_size(pools[target], &size);
+      if (size > 0) {
+        ABT_pool_pop(pools[target], &unit);
+        if (unit != ABT_UNIT_NULL) {
+          ABT_unit_set_associated_pool(unit, pools[1]);
+          ABT_xstream_run_unit(unit, pools[1]);
+          run_cnt++;
+        }
+      }
+    }
+#else /* ABT_USE_PRIVATE_POOLS */
+    /* Execute one work unit from the scheduler's pool */
+    ABT_pool_get_size(pools[0], &size);
+    if (size > 0) {
+      ABT_pool_pop(pools[0], &unit);
+      if (unit != ABT_UNIT_NULL) {
+        ABT_xstream_run_unit(unit, pools[0]);
+        run_cnt++;
+      }
+    }
+
+    /* Steal a work unit from other pools */
+    target = rand_r(&seed) % (num_pools-1) + 1;
+    ABT_pool_get_size(pools[target], &size);
+    if (size > 0) {
+      ABT_pool_pop(pools[target], &unit);
+      if (unit != ABT_UNIT_NULL) {
+        ABT_unit_set_associated_pool(unit, pools[0]);
+        ABT_xstream_run_unit(unit, pools[0]);
+        run_cnt++;
+      }
+    }
+#endif /* ABT_USE_PRIVATE_POOLS */
+
+    if (++work_count >= p_data->event_freq) {
+      ABT_xstream_check_events(sched);
+      ABT_sched_has_to_stop(sched, &stop);
+      if (stop == ABT_TRUE)
+        break;
+      work_count = 0;
+#ifdef ABT_USE_SCHED_SLEEP
+      if (run_cnt == 0) {
+        sleep_cnt = 0;
+        nanosleep(&sleep_time, NULL);
+        if (sleep_time.tv_nsec < 1048576) {
+          sleep_time.tv_nsec <<= 2;
+        }
+      } else if (sleep_cnt == 8) {
+        sleep_cnt = 0;
+        nanosleep(&sleep_time, NULL);
+      } else {
+        sleep_time.tv_nsec = 128;
+        sleep_cnt++;
+        run_cnt = 0;
+      }
+#endif /* ABT_USE_SCHED_SLEEP */
+    }
+  }
+  free(pools);
+}
+
+static int __kmp_abt_sched_free(ABT_sched sched) {
+    __kmp_abt_sched_data_t *p_data;
+    ABT_sched_get_data(sched, (void **)&p_data);
+    free(p_data);
+    return ABT_SUCCESS;
+}
+
+static inline void __kmp_abt_free_task(kmp_info_t *th, kmp_taskdata_t *taskdata)
+{
+  int gtid = __kmp_gtid_from_thread(th);
+
+  KA_TRACE(30, ("__kmp_free_task: (enter) T#%d - task %p\n", gtid, taskdata));
+
+  /* [AC] we need those steps to mark the task as finished so the dependencies
+   *  can be completed */
+  taskdata->td_flags.complete = 1; // mark the task as completed
+  __kmp_release_deps(gtid, taskdata);
+  taskdata->td_flags.executing = 0; // suspend the finishing task
+  // Check to make sure all flags and counters have the correct values
+  //KMP_DEBUG_ASSERT(taskdata->td_flags.tasktype == TASK_EXPLICIT);
+  //KMP_DEBUG_ASSERT(taskdata->td_flags.executing == 0);
+  //KMP_DEBUG_ASSERT(taskdata->td_flags.complete == 1);
+  //KMP_DEBUG_ASSERT(taskdata->td_flags.freed == 0);
+  //KMP_DEBUG_ASSERT(TCR_4(taskdata->td_allocated_child_tasks) == 0
+  //                 || taskdata->td_flags.task_serial == 1);
+  //KMP_DEBUG_ASSERT(TCR_4(taskdata->td_incomplete_child_tasks) == 0);
+
+  taskdata->td_flags.freed = 1;
+
+  /* Free the task queue if it was allocated. */
+  if (taskdata->td_task_queue) {
+    KMP_DEBUG_ASSERT(taskdata->td_tq_cur_size == 0);
+    KMP_INTERNAL_FREE(taskdata->td_task_queue);
+  }
+
+  // deallocate the taskdata and shared variable blocks associated with this
+  // task
+#if USE_FAST_MEMORY
+  __kmp_fast_free(th, taskdata);
+#else /* ! USE_FAST_MEMORY */
+  __kmp_thread_free(th, taskdata);
+#endif
+
+  KA_TRACE(20, ("__kmp_free_task: (exit) T#%d - task %p\n", gtid, taskdata));
+}
+
+static void __kmp_abt_execute_task(void *arg) {
+  // It is corresponding to __kmp_execute_tasks_.
+  int gtid;
+
+  kmp_task_t *task = (kmp_task_t *)arg;
+  kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
+  kmp_info_t *th;
+
+  // /* [AC] we need to set some flags in the task data so the dependencies can
+  //  * be checked and fulfilled */
+  // taskdata -> td_flags.started = 1;
+  // taskdata -> td_flags.executing = 1;
+
+  th = __kmp_abt_bind_task_to_thread(taskdata->td_team, taskdata);
+  gtid = __kmp_gtid_from_thread(th);
+
+  KA_TRACE(20, ("__kmp_abt_execute_task: T#%d before executing task %p.\n", gtid, task));
+
+  // Run __kmp_invoke_task to handle internal counters correctly .
+  (*(task->routine))(gtid, task);
+
+  kmp_taskdata_t *current_task = th->th.th_current_task;
+
+  if (!taskdata->td_flags.tiedness) {
+    // If this task is an untied one, we need to retrieve kmp_info because it
+    // may have been changed. */
+    th = __kmp_abt_get_self_info();
+  }
+
+  /* Reset th's ownership */
+  __kmp_abt_release_info(th);
+
+  // Finish all the remaining tasks created by this task.
+  for (int i = 0; i < taskdata->td_tq_cur_size; i++) {
+    int status = ABT_thread_free(&taskdata->td_task_queue[i]);
+    KMP_ASSERT(status == ABT_SUCCESS);
+  }
+  taskdata->td_tq_cur_size = 0;
+
+  KA_TRACE(20, ("__kmp_abt_execute_task: T#%d after executing task %p.\n",
+                __kmp_gtid_from_thread(th), task));
+}
+
+int __kmp_abt_create_task(kmp_info_t *th, kmp_task_t *task) {
+  int status;
+  int gtid = __kmp_gtid_from_thread(th);
+  ABT_pool dest = __kmp_abt_get_my_pool(gtid);
+
+  KA_TRACE(20, ("__kmp_create_task: T#%d before creating task %p"
+                " into the pool %p.\n",
+                gtid, task, dest));
+
+  /* Check if the task queue has an empty slot */
+  kmp_taskdata_t *td = th->th.th_current_task;
+  if (td->td_tq_cur_size == td->td_tq_max_size) {
+    size_t new_max_size;
+    if (td->td_tq_max_size == 0) {
+      /* Empty queue. We allocate 32 slots by default. */
+      new_max_size = 32;
+    } else {
+      /* The task queue is full. Expand it if possible. */
+      new_max_size = td->td_tq_max_size * 2;
+      if (new_max_size > MAX_ABT_TASKS) {
+        KA_TRACE(20, ("__kmp_create_task: T#%d - queue is full\n", gtid));
+        return FALSE;
+      }
+    }
+
+    void *queue = (void *)td->td_task_queue;
+    size_t size = sizeof(kmp_abt_task_t) * new_max_size;
+    td->td_task_queue = (kmp_abt_task_t *)KMP_INTERNAL_REALLOC(queue, size);
+    td->td_tq_max_size = new_max_size;
+  }
+
+  status = ABT_thread_create(dest, __kmp_abt_execute_task, (void *)task,
+                             ABT_THREAD_ATTR_NULL,
+                             &td->td_task_queue[td->td_tq_cur_size++]);
+  KMP_ASSERT(status == ABT_SUCCESS);
+
+  KA_TRACE(20, ("__kmp_create_task: T#%d after creating task %p into the pool %p.\n",
+                gtid, task, dest));
+
+  return TRUE;
+}
+
+void __kmp_abt_wait_child_tasks(kmp_info_t *th, int yield) {
+  KA_TRACE(20, ("__kmp_wait_child_tasks: T#%d enter\n",
+                __kmp_gtid_from_thread(th)));
+
+  int i, status;
+  kmp_taskdata_t *taskdata = th->th.th_current_task;
+
+  if (taskdata->td_tq_cur_size == 0) {
+    /* leaf task case */
+    if (yield) {
+      __kmp_abt_release_info(th);
+
+      ABT_thread_yield();
+
+      if (taskdata->td_flags.tiedness) {
+        __kmp_abt_acquire_info_for_task(th, taskdata);
+      } else {
+        __kmp_abt_bind_task_to_thread(th->th.th_team, taskdata);
+      }
+    }
+    return;
+  }
+
+  /* Let others, e.g., tasks, can use this kmp_info */
+  __kmp_abt_release_info(th);
+
+  /* Give other tasks a chance for execution */
+  if (yield)
+    ABT_thread_yield();
+
+  /* Wait until all child tasks are complete. */
+  for (i = 0; i < taskdata->td_tq_cur_size; i++) {
+    status = ABT_thread_free(&taskdata->td_task_queue[i]);
+    KMP_ASSERT(status == ABT_SUCCESS);
+  }
+  taskdata->td_tq_cur_size = 0;
+
+  if (taskdata->td_flags.tiedness) {
+    /* Obtain kmp_info to continue the original task. */
+    __kmp_abt_acquire_info_for_task(th, taskdata);
+  } else {
+    th = __kmp_abt_bind_task_to_thread(th->th.th_team, taskdata);
+  }
+
+  KA_TRACE(20, ("__kmp_wait_child_tasks: T#%d done\n",
+                __kmp_gtid_from_thread(th)));
+}
+
+kmp_info_t *__kmp_abt_bind_task_to_thread(kmp_team_t *team,
+                                          kmp_taskdata_t *taskdata) {
+  int i, i_start, i_end;
+  kmp_info_t *th = NULL;
+
+  KA_TRACE(20, ("__kmp_abt_bind_task_to_thread: (enter) task %p\n", taskdata));
+
+  /* To handle gtid in the task code, we look for a suspended (blocked)
+   * thread in the team and use its info to execute this task. */
+  while (1) {
+    if (team->t.t_level <= 1) {
+      /* outermost team - we try to assign the thread that was executed on
+       * the same ES first and then check other threads in the team.  */
+      int rank;
+      ABT_xstream_self_rank(&rank);
+      if (rank < team->t.t_nproc) {
+        /* [SM] I think this condition should always be true, but just in
+         * case I miss something we check this condition. */
+        i_start = rank;
+        i_end = team->t.t_nproc + rank;
+      } else {
+        i_start = 0;
+        i_end = team->t.t_nproc;
+      }
+    } else {
+      /* nested team - we ignore the ES info since threads in the nested team
+       * may be executed by any ES. */
+      i_start = 0;
+      i_end = team->t.t_nproc;
+    }
+    /* TODO: This is a linear search. Can we do better? */
+    for (i = i_start; i < i_end; i++) {
+      int idx = (i < team->t.t_nproc) ? i : i % team->t.t_nproc;
+      th = team->t.t_threads[idx];
+      ABT_thread ult = th->th.th_info.ds.ds_thread;
+
+      if (th->th.th_active == FALSE && ult != ABT_THREAD_NULL) {
+        /* Try to take the ownership of kmp_info 'th' */
+        if (KMP_COMPARE_AND_STORE_RET32(&th->th.th_active, FALSE, TRUE) == FALSE) {
+          /* Bind this task as if it is executed by 'th'. */
+          th->th.th_current_task = taskdata;
+          __kmp_abt_set_self_info(th);
+          KA_TRACE(20, ("__kmp_abt_bind_task_to_thread: (exit) task %p"
+                        "bound to T#%d\n",
+                        taskdata, __kmp_gtid_from_thread(th)));
+          return th;
+        }
+      }
+    }
+    /* We could not find an available kmp_info. Thus, this task yields
+     * control to other work units and will try to find one later. */
+    ABT_thread_yield();
+  }
+  return NULL;
+}
+
+void __kmp_abt_create_uber(int gtid, kmp_info_t *th, size_t stack_size) {
+  KMP_DEBUG_ASSERT(KMP_UBER_GTID(gtid));
+  KA_TRACE(10, ("__kmp_abt_create_uber: T#%d\n", gtid));
+  ABT_thread handle;
+  ABT_thread_self(&handle);
+  if (handle == ABT_THREAD_NULL) {
+    // External threads might call this function.  In this case, we do not need
+    // to set `th` since external threads use pthread_setspecific,
+    __kmp_gtid_set_specific(gtid);
+  } else {
+    ABT_thread_set_arg(handle, (void *)th);
+  }
+  th->th.th_info.ds.ds_thread = handle;
+}
+
+#endif // KMP_USE_ABT
 
 // end of file //

@@ -1,0 +1,17 @@
+# examples
+fibonacci_future
+fibonacci_task
+fibonacci_thread_task
+hello_world
+hello_world_thread
+sched_predef
+sched_shared_pool
+sched_stack
+sched_user
+sched_and_pool_user
+stencil_task
+stencil_thread
+stencil_thread_cond
+dynamic-es/dyn_server
+dynamic-es/dyn_app
+dynamic-es/dyn_event

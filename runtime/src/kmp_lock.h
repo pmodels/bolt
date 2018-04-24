@@ -20,6 +20,11 @@
 #include "kmp_debug.h"
 #include "kmp_os.h"
 
+#if KMP_USE_ABT
+#include <abt.h>
+#include <pthread.h>
+#endif
+
 #ifdef __cplusplus
 #include <atomic>
 
@@ -101,6 +106,50 @@ extern void __kmp_validate_locks(void);
 //       3. User locks (includes critical sections)
 // ----------------------------------------------------------------------------
 
+
+#if KMP_USE_ABT
+
+#ifdef __cplusplus
+
+struct kmp_abt_mutex_lock {
+  // `initialized' must be the first entry in the lock data structure!
+  volatile kmp_abt_mutex_lock *initialized;
+  ABT_mutex mutex;
+  ident_t const *location;
+  kmp_lock_flags_t flags;
+};
+
+#else
+
+struct kmp_abt_mutex_lock;
+
+#endif
+
+typedef struct kmp_abt_mutex_lock kmp_abt_mutex_lock_t;
+
+struct kmp_abt_spin_lock {
+  pthread_spinlock_t spinlock;
+};
+typedef struct kmp_abt_spin_lock kmp_abt_spin_lock_t;
+
+static inline int __kmp_abt_acquire_spin_lock(kmp_abt_spin_lock_t *lck) {
+  return pthread_spin_lock(&lck->spinlock);
+}
+static inline int __kmp_abt_test_spin_lock(kmp_abt_spin_lock_t *lck) {
+  return pthread_spin_trylock(&lck->spinlock);
+}
+static inline void __kmp_abt_release_spin_lock(kmp_abt_spin_lock_t *lck) {
+  pthread_spin_unlock(&lck->spinlock);
+}
+static inline void __kmp_abt_init_spin_lock(kmp_abt_spin_lock_t *lck) {
+  pthread_spin_init(&lck->spinlock, 0);
+}
+static inline void __kmp_abt_destroy_spin_lock(kmp_abt_spin_lock_t *lck) {
+  pthread_spin_destroy(&lck->spinlock);
+}
+
+#endif
+
 // ============================================================================
 // Lock implementations.
 //
@@ -118,6 +167,21 @@ extern void __kmp_validate_locks(void);
 // usage (normal lock vs. critical section), etc. is not available with test and
 // set locks.
 // ----------------------------------------------------------------------------
+
+#if KMP_USE_ABT
+
+typedef kmp_abt_mutex_lock_t kmp_tas_lock_t;
+
+#if 0
+extern void __kmp_init_tas_lock(kmp_tas_lock_t *lck);
+static inline kmp_tas_lock_t __kmp_tas_lock_init_helper(kmp_tas_lock_t *lck) {
+  __kmp_init_tas_lock(lck);
+  return *lck;
+}
+#define KMP_TAS_LOCK_INITIALIZER(lock) __kmp_tas_lock_init_helper(&lock)
+#endif
+
+#else // KMP_USE_ABT
 
 struct kmp_base_tas_lock {
   // KMP_LOCK_FREE(tas) => unlocked; locked: (gtid+1) of owning thread
@@ -141,6 +205,8 @@ typedef union kmp_tas_lock kmp_tas_lock_t;
   {                                                                            \
     { KMP_LOCK_FREE(tas), 0 }                                                  \
   }
+
+#endif // KMP_USE_ABT
 
 extern int __kmp_acquire_tas_lock(kmp_tas_lock_t *lck, kmp_int32 gtid);
 extern int __kmp_test_tas_lock(kmp_tas_lock_t *lck, kmp_int32 gtid);
@@ -176,6 +242,23 @@ extern void __kmp_destroy_nested_tas_lock(kmp_tas_lock_t *lck);
 // set locks. With non-nested futex locks, the lock owner is not even available.
 // ----------------------------------------------------------------------------
 
+
+#if KMP_USE_ABT
+
+typedef kmp_abt_mutex_lock_t kmp_futex_lock_t;
+
+#if 0
+extern void __kmp_init_futex_lock(kmp_futex_lock_t *lck);
+static inline kmp_futex_lock_t __kmp_futex_lock_init_helper
+                               (kmp_futex_lock_t *lck) {
+    __kmp_init_futex_lock(lck);
+    return *lck;
+}
+#define KMP_FUTEX_LOCK_INITIALIZER(lock) __kmp_futex_lock_init_helper(&lock)
+#endif
+
+#else // KMP_USE_ABT
+
 struct kmp_base_futex_lock {
   volatile kmp_int32 poll; // KMP_LOCK_FREE(futex) => unlocked
   // 2*(gtid+1) of owning thread, 0 if unlocked
@@ -201,6 +284,8 @@ typedef union kmp_futex_lock kmp_futex_lock_t;
     { KMP_LOCK_FREE(futex), 0 }                                                \
   }
 
+#endif // KMP_USE_ABT
+
 extern int __kmp_acquire_futex_lock(kmp_futex_lock_t *lck, kmp_int32 gtid);
 extern int __kmp_test_futex_lock(kmp_futex_lock_t *lck, kmp_int32 gtid);
 extern int __kmp_release_futex_lock(kmp_futex_lock_t *lck, kmp_int32 gtid);
@@ -219,6 +304,22 @@ extern void __kmp_destroy_nested_futex_lock(kmp_futex_lock_t *lck);
 
 // ----------------------------------------------------------------------------
 // Ticket locks.
+
+#if KMP_USE_ABT
+
+typedef kmp_abt_mutex_lock_t kmp_ticket_lock_t;
+
+#if 0
+extern void __kmp_init_ticket_lock(kmp_ticket_lock_t *lck);
+static inline kmp_ticket_lock_t __kmp_ticket_lock_init_helper
+                                (kmp_ticket_lock_t *lck) {
+  __kmp_init_ticket_lock(lck);
+  return *lck;
+}
+#define KMP_TICKET_LOCK_INITIALIZER(lock) __kmp_ticket_lock_init_helper(&lock)
+#endif
+
+#else // KMP_USE_ABT
 
 #ifdef __cplusplus
 
@@ -260,6 +361,7 @@ struct kmp_base_ticket_lock;
 
 #endif // !__cplusplus
 
+
 typedef struct kmp_base_ticket_lock kmp_base_ticket_lock_t;
 
 union KMP_ALIGN_CACHE kmp_ticket_lock {
@@ -284,6 +386,8 @@ typedef union kmp_ticket_lock kmp_ticket_lock_t;
     }                                                                          \
   }
 
+#endif // KMP_USE_ABT
+
 extern int __kmp_acquire_ticket_lock(kmp_ticket_lock_t *lck, kmp_int32 gtid);
 extern int __kmp_test_ticket_lock(kmp_ticket_lock_t *lck, kmp_int32 gtid);
 extern int __kmp_test_ticket_lock_with_cheks(kmp_ticket_lock_t *lck,
@@ -303,6 +407,12 @@ extern void __kmp_destroy_nested_ticket_lock(kmp_ticket_lock_t *lck);
 
 // ----------------------------------------------------------------------------
 // Queuing locks.
+
+#if KMP_USE_ABT
+
+typedef kmp_abt_mutex_lock_t kmp_queuing_lock_t;
+
+#else
 
 #if KMP_USE_ADAPTIVE_LOCKS
 
@@ -392,6 +502,8 @@ union KMP_ALIGN_CACHE kmp_queuing_lock {
 
 typedef union kmp_queuing_lock kmp_queuing_lock_t;
 
+#endif // KMP_USE_ABT
+
 extern int __kmp_acquire_queuing_lock(kmp_queuing_lock_t *lck, kmp_int32 gtid);
 extern int __kmp_test_queuing_lock(kmp_queuing_lock_t *lck, kmp_int32 gtid);
 extern int __kmp_release_queuing_lock(kmp_queuing_lock_t *lck, kmp_int32 gtid);
@@ -411,6 +523,13 @@ extern void __kmp_destroy_nested_queuing_lock(kmp_queuing_lock_t *lck);
 
 // ----------------------------------------------------------------------------
 // Adaptive locks.
+
+#if KMP_USE_ABT
+
+typedef kmp_abt_mutex_lock_t kmp_adaptive_lock_t;
+
+#else // KMP_USE_ABT
+
 struct kmp_base_adaptive_lock {
   kmp_base_queuing_lock qlk;
   KMP_ALIGN(CACHE_LINE)
@@ -430,10 +549,19 @@ typedef union kmp_adaptive_lock kmp_adaptive_lock_t;
 
 #define GET_QLK_PTR(l) ((kmp_queuing_lock_t *)&(l)->lk.qlk)
 
+#endif // KMP_USE_ABT
+
 #endif // KMP_USE_ADAPTIVE_LOCKS
 
 // ----------------------------------------------------------------------------
 // DRDPA ticket locks.
+
+#if KMP_USE_ABT
+
+typedef kmp_abt_mutex_lock_t kmp_drdpa_lock_t;
+
+#else
+
 struct kmp_base_drdpa_lock {
   // All of the fields on the first cache line are only written when
   // initializing or reconfiguring the lock.  These are relatively rare
@@ -489,6 +617,8 @@ union KMP_ALIGN_CACHE kmp_drdpa_lock {
 
 typedef union kmp_drdpa_lock kmp_drdpa_lock_t;
 
+#endif // KMP_USE_ABT
+
 extern int __kmp_acquire_drdpa_lock(kmp_drdpa_lock_t *lck, kmp_int32 gtid);
 extern int __kmp_test_drdpa_lock(kmp_drdpa_lock_t *lck, kmp_int32 gtid);
 extern int __kmp_release_drdpa_lock(kmp_drdpa_lock_t *lck, kmp_int32 gtid);
@@ -515,6 +645,26 @@ extern void __kmp_destroy_nested_drdpa_lock(kmp_drdpa_lock_t *lck);
 // implemented with other lock kinds as they require gtids which are not
 // available at initialization time.
 
+#if KMP_USE_ABT
+
+typedef kmp_abt_spin_lock_t kmp_bootstrap_lock_t;
+
+extern int __kmp_acquire_bootstrap_lock(kmp_bootstrap_lock_t *lck);
+extern int __kmp_test_bootstrap_lock(kmp_bootstrap_lock_t *lck);
+extern void __kmp_release_bootstrap_lock(kmp_bootstrap_lock_t *lck);
+extern void __kmp_init_bootstrap_lock(kmp_bootstrap_lock_t *lck);
+extern void __kmp_destroy_bootstrap_lock(kmp_bootstrap_lock_t *lck);
+
+static inline kmp_bootstrap_lock_t __kmp_bootstrap_lock_init_helper
+                                   (kmp_bootstrap_lock_t *lck) {
+  __kmp_init_bootstrap_lock(lck);
+  return *lck;
+}
+#define KMP_BOOTSTRAP_LOCK_INITIALIZER(lock) \
+        __kmp_bootstrap_lock_init_helper(&lock)
+
+#else // KMP_USE_ABT
+
 typedef kmp_ticket_lock_t kmp_bootstrap_lock_t;
 
 #define KMP_BOOTSTRAP_LOCK_INITIALIZER(lock) KMP_TICKET_LOCK_INITIALIZER((lock))
@@ -538,6 +688,8 @@ static inline void __kmp_init_bootstrap_lock(kmp_bootstrap_lock_t *lck) {
 static inline void __kmp_destroy_bootstrap_lock(kmp_bootstrap_lock_t *lck) {
   __kmp_destroy_ticket_lock(lck);
 }
+
+#endif // KMP_USE_ABT
 
 // Internal RTL locks.
 //
@@ -630,8 +782,9 @@ extern int (*__kmp_acquire_user_lock_with_checks_)(kmp_user_lock_p lck,
                                                    kmp_int32 gtid);
 
 #if KMP_OS_LINUX &&                                                            \
-    (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)
-
+    (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)      \
+    && !KMP_USE_ABT
+/* BOLT always uses a function table. */
 #define __kmp_acquire_user_lock_with_checks(lck, gtid)                         \
   if (__kmp_user_lock_kind == lk_tas) {                                        \
     if (__kmp_env_consistency_check) {                                         \
@@ -690,6 +843,10 @@ extern int (*__kmp_test_user_lock_with_checks_)(kmp_user_lock_p lck,
 extern int __kmp_env_consistency_check; /* AC: copy from kmp.h here */
 static inline int __kmp_test_user_lock_with_checks(kmp_user_lock_p lck,
                                                    kmp_int32 gtid) {
+#if KMP_USE_ABT
+  /* BOLT always uses a function table. */
+  if (0) {
+#else
   if (__kmp_user_lock_kind == lk_tas) {
     if (__kmp_env_consistency_check) {
       char const *const func = "omp_test_lock";
@@ -700,6 +857,7 @@ static inline int __kmp_test_user_lock_with_checks(kmp_user_lock_p lck,
     }
     return ((lck->tas.lk.poll == 0) &&
             KMP_COMPARE_AND_STORE_ACQ32(&(lck->tas.lk.poll), 0, gtid + 1));
+#endif
   } else {
     KMP_DEBUG_ASSERT(__kmp_test_user_lock_with_checks_ != NULL);
     return (*__kmp_test_user_lock_with_checks_)(lck, gtid);
@@ -748,8 +906,8 @@ static inline void __kmp_destroy_user_lock_with_checks(kmp_user_lock_p lck) {
 extern int (*__kmp_acquire_nested_user_lock_with_checks_)(kmp_user_lock_p lck,
                                                           kmp_int32 gtid);
 
-#if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64)
-
+#if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64) && !KMP_USE_ABT
+/* BOLT always uses a function table. */
 #define __kmp_acquire_nested_user_lock_with_checks(lck, gtid, depth)           \
   if (__kmp_user_lock_kind == lk_tas) {                                        \
     if (__kmp_env_consistency_check) {                                         \
@@ -809,6 +967,10 @@ extern int (*__kmp_test_nested_user_lock_with_checks_)(kmp_user_lock_p lck,
 #if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64)
 static inline int __kmp_test_nested_user_lock_with_checks(kmp_user_lock_p lck,
                                                           kmp_int32 gtid) {
+#if KMP_USE_ABT
+  if (0) {
+    /* BOLT always uses a function table. */
+#else
   if (__kmp_user_lock_kind == lk_tas) {
     int retval;
     if (__kmp_env_consistency_check) {
@@ -830,6 +992,7 @@ static inline int __kmp_test_nested_user_lock_with_checks(kmp_user_lock_p lck,
       lck->tas.lk.depth_locked = 1;
     }
     return retval;
+#endif
   } else {
     KMP_DEBUG_ASSERT(__kmp_test_nested_user_lock_with_checks_ != NULL);
     return (*__kmp_test_nested_user_lock_with_checks_)(lck, gtid);

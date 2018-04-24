@@ -50,6 +50,9 @@ include_directories(
 if(${LIBOMP_USE_HWLOC})
   include_directories(${LIBOMP_HWLOC_INSTALL_DIR}/include)
 endif()
+if(${LIBOMP_USE_ARGOBOTS})
+  include_directories(${LIBOMP_ARGOBOTS_INSTALL_DIR}/include)
+endif()
 
 # Getting correct source files to build library
 set(LIBOMP_CFILES)
@@ -91,9 +94,14 @@ else()
     libomp_append(LIBOMP_ASMFILES z_Windows_NT-586_asm.asm) # Windows assembly file
   else()
     # Unix specific files
-    libomp_append(LIBOMP_CXXFILES z_Linux_util.cpp)
-    libomp_append(LIBOMP_CXXFILES kmp_gsupport.cpp)
-    libomp_append(LIBOMP_ASMFILES z_Linux_asm.S) # Unix assembly file
+    if(LIBOMP_USE_ARGOBOTS)
+      libomp_append(LIBOMP_CXXFILES z_Linux_util.cpp)
+      libomp_append(LIBOMP_ASMFILES z_Linux_asm.S) # Unix assembly file
+    else()
+      libomp_append(LIBOMP_CXXFILES z_Linux_util.cpp)
+      libomp_append(LIBOMP_CXXFILES kmp_gsupport.cpp)
+      libomp_append(LIBOMP_ASMFILES z_Linux_asm.S) # Unix assembly file
+    endif()
   endif()
   libomp_append(LIBOMP_CFILES thirdparty/ittnotify/ittnotify_static.c LIBOMP_USE_ITT_NOTIFY)
   libomp_append(LIBOMP_CXXFILES kmp_debugger.cpp LIBOMP_USE_DEBUGGER)
@@ -141,6 +149,11 @@ endif()
 libomp_get_ldflags(LIBOMP_CONFIGURED_LDFLAGS)
 
 add_library(omp ${LIBOMP_LIBRARY_KIND} ${LIBOMP_SOURCE_FILES})
+
+if(${LIBOMP_USE_BUILTIN_ARGOBOTS})
+  # The following triggers building Argobots.
+  add_dependencies(omp libabt)
+endif()
 
 set_target_properties(omp PROPERTIES
   PREFIX "" SUFFIX "" OUTPUT_NAME "${LIBOMP_LIB_FILE}"

@@ -43,6 +43,10 @@
 #define FTN_UNSET_AFFINITY_MASK_PROC kmp_unset_affinity_mask_proc
 #define FTN_GET_AFFINITY_MASK_PROC kmp_get_affinity_mask_proc
 
+#if KMP_USE_ABT
+#define FTN_ABT_SET_TASKLET kmp_abt_set_tasklet
+#endif
+
 #define FTN_MALLOC kmp_malloc
 #define FTN_ALIGNED_MALLOC kmp_aligned_malloc
 #define FTN_CALLOC kmp_calloc
@@ -164,6 +168,10 @@
 #define FTN_SET_AFFINITY_MASK_PROC kmp_set_affinity_mask_proc_
 #define FTN_UNSET_AFFINITY_MASK_PROC kmp_unset_affinity_mask_proc_
 #define FTN_GET_AFFINITY_MASK_PROC kmp_get_affinity_mask_proc_
+
+#if KMP_USE_ABT
+#define FTN_ABT_SET_TASKLET kmp_abt_set_tasklet_
+#endif
 
 #define FTN_MALLOC kmp_malloc_
 #define FTN_ALIGNED_MALLOC kmp_aligned_malloc_

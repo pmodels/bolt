@@ -61,7 +61,13 @@ static void __kmp_for_static_init(ident_t *loc, kmp_int32 global_tid,
   kmp_uint32 nth;
   UT trip_count;
   kmp_team_t *team;
+
+#if KMP_USE_ABT && KMP_ABT_USE_SELF_INFO
+  kmp_info_t *th = __kmp_abt_get_self_info();
+  KMP_DEBUG_ASSERT(th->th.th_info.ds.ds_gtid == gtid);
+#else
   kmp_info_t *th = __kmp_threads[gtid];
+#endif
 
 #if OMPT_SUPPORT && OMPT_OPTIONAL
   ompt_team_info_t *team_info = NULL;
@@ -446,8 +452,15 @@ static void __kmp_dist_for_static_init(ident_t *loc, kmp_int32 gtid,
       __kmp_error_construct(kmp_i18n_msg_CnsLoopIncrIllegal, ct_pdo, loc);
     }
   }
+
+#if KMP_USE_ABT && KMP_ABT_USE_SELF_INFO
+  th = __kmp_abt_get_self_info();
+  KMP_DEBUG_ASSERT(th->th.th_info.ds.ds_gtid == gtid);
+  tid = th->th.th_info.ds.ds_tid;
+#else
   tid = __kmp_tid_from_gtid(gtid);
   th = __kmp_threads[gtid];
+#endif
   nth = th->th.th_team_nproc;
   team = th->th.th_team;
 #if OMP_40_ENABLED

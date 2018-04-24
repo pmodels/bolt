@@ -21,6 +21,8 @@
 #include "ompt-specific.h"
 #endif
 
+#if !KMP_USE_ABT
+
 /*!
 @defgroup WAIT_RELEASE Wait/Release operations
 
@@ -757,9 +759,14 @@ public:
   flag_type get_ptr_type() { return flag_oncore; }
 };
 
+#endif /* !KMP_USE_ABT */
+
 // Used to wake up threads, volatile void* flag is usually the th_sleep_loc
 // associated with int gtid.
 static inline void __kmp_null_resume_wrapper(int gtid, volatile void *flag) {
+#if KMP_USE_ABT
+  KMP_DEBUG_ASSERT(0);
+#else // KMP_USE_ABT
   if (!flag)
     return;
 
@@ -774,6 +781,7 @@ static inline void __kmp_null_resume_wrapper(int gtid, volatile void *flag) {
     __kmp_resume_oncore(gtid, NULL);
     break;
   }
+#endif // KMP_USE_ABT
 }
 
 /*!
