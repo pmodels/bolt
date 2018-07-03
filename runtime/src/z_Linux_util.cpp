@@ -3167,7 +3167,6 @@ static void __kmp_abt_sched_run_es0(ABT_sched sched) {
   int target;
   ABT_bool stop;
   unsigned seed = time(NULL);
-  size_t size;
 
 #ifdef ABT_USE_SCHED_SLEEP
   struct timespec sleep_time;
@@ -3186,36 +3185,27 @@ static void __kmp_abt_sched_run_es0(ABT_sched sched) {
     run_cnt = 0;
 
     /* Execute one work unit from the private pool */
-    ABT_pool_get_size(pools[0], &size);
-    if (size > 0) {
-      ABT_pool_pop(pools[0], &unit);
-      if (unit != ABT_UNIT_NULL) {
-        ABT_xstream_run_unit(unit, pools[0]);
-        run_cnt++;
-      }
+    ABT_pool_pop(pools[0], &unit);
+    if (unit != ABT_UNIT_NULL) {
+      ABT_xstream_run_unit(unit, pools[0]);
+      run_cnt++;
     }
 
     /* shared pool */
-    ABT_pool_get_size(pools[1], &size);
-    if (size > 0) {
-      ABT_pool_pop(pools[1], &unit);
-      if (unit != ABT_UNIT_NULL) {
-        ABT_xstream_run_unit(unit, pools[1]);
-        run_cnt++;
-      }
+    ABT_pool_pop(pools[1], &unit);
+    if (unit != ABT_UNIT_NULL) {
+      ABT_xstream_run_unit(unit, pools[1]);
+      run_cnt++;
     }
 
     if (run_cnt == 0 && num_pools > 2) {
       /* Steal a work unit from other pools */
       target = rand_r(&seed) % (num_pools - 2) + 2;
-      ABT_pool_get_size(pools[target], &size);
-      if (size > 0) {
-        ABT_pool_pop(pools[target], &unit);
-        if (unit != ABT_UNIT_NULL) {
-          ABT_unit_set_associated_pool(unit, pools[1]);
-          ABT_xstream_run_unit(unit, pools[1]);
-          run_cnt++;
-        }
+      ABT_pool_pop(pools[target], &unit);
+      if (unit != ABT_UNIT_NULL) {
+        ABT_unit_set_associated_pool(unit, pools[1]);
+        ABT_xstream_run_unit(unit, pools[1]);
+        run_cnt++;
       }
     }
 
@@ -3255,7 +3245,6 @@ static void __kmp_abt_sched_run(ABT_sched sched) {
   int target;
   ABT_bool stop;
   unsigned seed = time(NULL);
-  size_t size;
 
 #ifdef ABT_USE_SCHED_SLEEP
   struct timespec sleep_time;
@@ -3275,59 +3264,44 @@ static void __kmp_abt_sched_run(ABT_sched sched) {
     run_cnt = 0;
 
     /* Execute one work unit from the private pool */
-    ABT_pool_get_size(pools[0], &size);
-    if (size > 0) {
-      ABT_pool_pop(pools[0], &unit);
-      if (unit != ABT_UNIT_NULL) {
-        ABT_xstream_run_unit(unit, pools[0]);
-        run_cnt++;
-      }
+    ABT_pool_pop(pools[0], &unit);
+    if (unit != ABT_UNIT_NULL) {
+      ABT_xstream_run_unit(unit, pools[0]);
+      run_cnt++;
     }
 
     /* shared pool */
-    ABT_pool_get_size(pools[1], &size);
-    if (size > 0) {
-      ABT_pool_pop(pools[1], &unit);
-      if (unit != ABT_UNIT_NULL) {
-        ABT_xstream_run_unit(unit, pools[1]);
-        run_cnt++;
-      }
+    ABT_pool_pop(pools[1], &unit);
+    if (unit != ABT_UNIT_NULL) {
+      ABT_xstream_run_unit(unit, pools[1]);
+      run_cnt++;
     }
 
     /* Steal a work unit from other pools */
     if (run_cnt == 0) {
       target = rand_r(&seed) % (num_pools-2) + 2;
-      ABT_pool_get_size(pools[target], &size);
-      if (size > 0) {
-        ABT_pool_pop(pools[target], &unit);
-        if (unit != ABT_UNIT_NULL) {
-          ABT_unit_set_associated_pool(unit, pools[1]);
-          ABT_xstream_run_unit(unit, pools[1]);
-          run_cnt++;
-        }
+      ABT_pool_pop(pools[target], &unit);
+      if (unit != ABT_UNIT_NULL) {
+        ABT_unit_set_associated_pool(unit, pools[1]);
+        ABT_xstream_run_unit(unit, pools[1]);
+        run_cnt++;
       }
     }
 #else /* ABT_USE_PRIVATE_POOLS */
     /* Execute one work unit from the scheduler's pool */
-    ABT_pool_get_size(pools[0], &size);
-    if (size > 0) {
-      ABT_pool_pop(pools[0], &unit);
-      if (unit != ABT_UNIT_NULL) {
-        ABT_xstream_run_unit(unit, pools[0]);
-        run_cnt++;
-      }
+    ABT_pool_pop(pools[0], &unit);
+    if (unit != ABT_UNIT_NULL) {
+      ABT_xstream_run_unit(unit, pools[0]);
+      run_cnt++;
     }
 
     /* Steal a work unit from other pools */
     target = rand_r(&seed) % (num_pools-1) + 1;
-    ABT_pool_get_size(pools[target], &size);
-    if (size > 0) {
-      ABT_pool_pop(pools[target], &unit);
-      if (unit != ABT_UNIT_NULL) {
-        ABT_unit_set_associated_pool(unit, pools[0]);
-        ABT_xstream_run_unit(unit, pools[0]);
-        run_cnt++;
-      }
+    ABT_pool_pop(pools[target], &unit);
+    if (unit != ABT_UNIT_NULL) {
+      ABT_unit_set_associated_pool(unit, pools[0]);
+      ABT_xstream_run_unit(unit, pools[0]);
+      run_cnt++;
     }
 #endif /* ABT_USE_PRIVATE_POOLS */
 
