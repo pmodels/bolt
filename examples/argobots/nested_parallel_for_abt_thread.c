@@ -79,7 +79,7 @@ void vector_scal_launch(void *arguments)
                                         * num_ults);
 
     threads = (ABT_thread *)malloc(sizeof(ABT_thread) * num_ults);
-    
+
     int bloc = it / (num_ults);
     int rest = it % (num_ults);
     int start = 0;
@@ -133,7 +133,7 @@ int main(int argc, char *argv[])
     it = ceil(sqrt(ntasks));
     ntasks = it * it;
     inner_xstreams = argc > 3 ? atoi(argv[3]) : NUM_XSTREAMS;
-    
+
     g_pools = (ABT_pool *)malloc(sizeof(ABT_pool) * num_xstreams);
 
     a = malloc(sizeof(float) * ntasks);

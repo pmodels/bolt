@@ -47,10 +47,9 @@ function(libomp_check_architecture_flag flag retval)
 endfunction()
 
 # Checking C, CXX, Linker Flags
-check_cxx_compiler_flag(-std=c++11 LIBOMP_HAVE_STD_CPP11_FLAG)
 check_cxx_compiler_flag(-fno-exceptions LIBOMP_HAVE_FNO_EXCEPTIONS_FLAG)
+check_cxx_compiler_flag(-fno-rtti LIBOMP_HAVE_FNO_RTTI_FLAG)
 check_c_compiler_flag("-x c++" LIBOMP_HAVE_X_CPP_FLAG)
-check_c_compiler_flag(-Werror LIBOMP_HAVE_WERROR_FLAG)
 check_c_compiler_flag(-Wunused-function LIBOMP_HAVE_WNO_UNUSED_FUNCTION_FLAG)
 check_c_compiler_flag(-Wunused-local-typedef LIBOMP_HAVE_WNO_UNUSED_LOCAL_TYPEDEF_FLAG)
 check_c_compiler_flag(-Wunused-value LIBOMP_HAVE_WNO_UNUSED_VALUE_FLAG)
@@ -194,15 +193,15 @@ endif()
 if(${LIBOMP_STATS})
   check_c_source_compiles(
      "__thread int x;
-     int main(int argc, char** argv) 
+     int main(int argc, char** argv)
      { x = argc; return x; }"
      LIBOMP_HAVE___THREAD)
   check_c_source_compiles(
-     "int main(int argc, char** argv) 
+     "int main(int argc, char** argv)
      { unsigned long long t = __builtin_readcyclecounter(); return 0; }"
      LIBOMP_HAVE___BUILTIN_READCYCLECOUNTER)
   if(NOT LIBOMP_HAVE___BUILTIN_READCYCLECOUNTER)
-    if(${IA32} OR ${INTEL64})
+    if(${IA32} OR ${INTEL64} OR ${MIC})
       check_include_file(x86intrin.h LIBOMP_HAVE_X86INTRIN_H)
       libomp_append(CMAKE_REQUIRED_DEFINITIONS -DLIBOMP_HAVE_X86INTRIN_H LIBOMP_HAVE_X86INTRIN_H)
       check_c_source_compiles(
@@ -222,7 +221,7 @@ endif()
 
 # Check if OMPT support is available
 # Currently, __builtin_frame_address() is required for OMPT
-# Weak attribute is required for Unices, LIBPSAPI is used for Windows
+# Weak attribute is required for Unices (except Darwin), LIBPSAPI is used for Windows
 check_c_source_compiles("int main(int argc, char** argv) {
   void* p = __builtin_frame_address(0);
   return 0;}" LIBOMP_HAVE___BUILTIN_FRAME_ADDRESS)
@@ -237,7 +236,15 @@ endif()
 if(NOT LIBOMP_HAVE___BUILTIN_FRAME_ADDRESS)
   set(LIBOMP_HAVE_OMPT_SUPPORT FALSE)
 else()
-  if(LIBOMP_HAVE_WEAK_ATTRIBUTE OR LIBOMP_HAVE_PSAPI)
+  if( # hardware architecture supported?
+     ((LIBOMP_ARCH STREQUAL x86_64) OR
+      (LIBOMP_ARCH STREQUAL i386) OR
+#      (LIBOMP_ARCH STREQUAL arm) OR
+      (LIBOMP_ARCH STREQUAL aarch64) OR
+      (LIBOMP_ARCH STREQUAL ppc64le) OR
+      (LIBOMP_ARCH STREQUAL ppc64))
+     AND # OS supported?
+     ((WIN32 AND LIBOMP_HAVE_PSAPI) OR APPLE OR (NOT WIN32 AND LIBOMP_HAVE_WEAK_ATTRIBUTE)))
     set(LIBOMP_HAVE_OMPT_SUPPORT TRUE)
   else()
     set(LIBOMP_HAVE_OMPT_SUPPORT FALSE)
@@ -246,24 +253,30 @@ endif()
 
 # Check if HWLOC support is available
 if(${LIBOMP_USE_HWLOC})
-  if(WIN32)
-    set(LIBOMP_HAVE_HWLOC FALSE)
-    libomp_say("Using hwloc not supported on Windows yet")
-  else()
-    set(CMAKE_REQUIRED_INCLUDES ${LIBOMP_HWLOC_INSTALL_DIR}/include)
-    check_include_file(hwloc.h LIBOMP_HAVE_HWLOC_H)
-    set(CMAKE_REQUIRED_INCLUDES)
-    check_library_exists(hwloc hwloc_topology_init 
+  set(CMAKE_REQUIRED_INCLUDES ${LIBOMP_HWLOC_INSTALL_DIR}/include)
+  check_include_file(hwloc.h LIBOMP_HAVE_HWLOC_H)
+  set(CMAKE_REQUIRED_INCLUDES)
+  find_library(LIBOMP_HWLOC_LIBRARY
+    NAMES hwloc libhwloc
+    HINTS ${LIBOMP_HWLOC_INSTALL_DIR}/lib)
+  if(LIBOMP_HWLOC_LIBRARY)
+    check_library_exists(${LIBOMP_HWLOC_LIBRARY} hwloc_topology_init
       ${LIBOMP_HWLOC_INSTALL_DIR}/lib LIBOMP_HAVE_LIBHWLOC)
-    find_library(LIBOMP_HWLOC_LIBRARY hwloc ${LIBOMP_HWLOC_INSTALL_DIR}/lib)
     get_filename_component(LIBOMP_HWLOC_LIBRARY_DIR ${LIBOMP_HWLOC_LIBRARY} PATH)
-    if(LIBOMP_HAVE_HWLOC_H AND LIBOMP_HAVE_LIBHWLOC AND LIBOMP_HWLOC_LIBRARY)
-      set(LIBOMP_HAVE_HWLOC TRUE)
-    else()
-      set(LIBOMP_HAVE_HWLOC FALSE)
-      libomp_say("Could not find hwloc")
-    endif()
   endif()
+  if(LIBOMP_HAVE_HWLOC_H AND LIBOMP_HAVE_LIBHWLOC AND LIBOMP_HWLOC_LIBRARY)
+    set(LIBOMP_HAVE_HWLOC TRUE)
+  else()
+    set(LIBOMP_HAVE_HWLOC FALSE)
+    libomp_say("Could not find hwloc")
+  endif()
+endif()
+
+# Check if ThreadSanitizer support is available
+if("${CMAKE_SYSTEM_NAME}" MATCHES "Linux" AND ${INTEL64})
+  set(LIBOMP_HAVE_TSAN_SUPPORT TRUE)
+else()
+  set(LIBOMP_HAVE_TSAN_SUPPORT FALSE)
 endif()
 
 # Check if ARGOBOTS support is available
@@ -290,5 +303,7 @@ if(${LIBOMP_USE_ARGOBOTS})
       libomp_say("Could not find Argobots")
     endif()
   endif()
+  libomp_say("BOLT does not support OMPT")
+  set(LIBOMP_OMPT_SUPPORT FALSE)
+  set(LIBOMP_HAVE_OMPT_SUPPORT FALSE)
 endif()
-

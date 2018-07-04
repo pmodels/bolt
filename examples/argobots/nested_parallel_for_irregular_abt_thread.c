@@ -72,7 +72,7 @@ void random_launch(void *arguments)
     args = (vector_scal_args_t *) malloc(sizeof(vector_scal_args_t)
                                          * num_ults);
     threads = (ABT_thread *)malloc(sizeof(ABT_thread) * num_ults);
-    
+
     int bloc = it / (num_ults);
     int rest = it % (num_ults);
     int start = 0;

@@ -1,4 +1,5 @@
 // RUN: %libomp-compile-and-run
+// REQUIRES: !(abt && clang)
 #include <stdio.h>
 #include <math.h>
 #include "omp_testsuite.h"
@@ -11,7 +12,7 @@ int test_omp_for_lastprivate()
   int sum = 0;
   int known_sum;
   int i0;
-  
+
   i0 = -1;
 
   #pragma omp parallel
@@ -30,7 +31,7 @@ int test_omp_for_lastprivate()
     {
       sum = sum + sum0;
     }  /* end of critical */
-  }  /* end of parallel */  
+  }  /* end of parallel */
 
   known_sum = (LOOPCOUNT * (LOOPCOUNT + 1)) / 2;
   fprintf(stderr, "known_sum = %d , sum = %d\n",known_sum,sum);
