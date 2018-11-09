@@ -6,6 +6,7 @@
 */
 #include <stdio.h>
 #include <omp.h>
+#include "omp_testsuite.h"
 
 #if defined(WIN32) || defined(_WIN32)
 #include <windows.h>
@@ -179,6 +180,7 @@ int run_loop_64(i64 loop_lb, i64 loop_ub, i64 loop_st, int loop_chunk) {
     }; // for i
     while (loop_sync == 0) {
       delay();
+      THREAD_SCHED_POINT();
     }; // while
     // At this moment we do not have any more chunks -- all the chunks already
     // processed by master thread
@@ -331,6 +333,7 @@ int run_loop_32(int loop_lb, int loop_ub, int loop_st, int loop_chunk) {
     }; // for i
     while (loop_sync == 0) {
       delay();
+      THREAD_SCHED_POINT();
     }; // while
     // At this moment we do not have any more chunks -- all the chunks already
     // processed by the master thread

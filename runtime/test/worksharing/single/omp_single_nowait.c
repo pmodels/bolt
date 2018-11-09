@@ -15,7 +15,8 @@ void wait_for_release_then_increment(int rank)
 {
   fprintf(stderr, "Thread nr %d enters first section"
     " and waits.\n", rank);
-  while (release == 0);
+  while (release == 0)
+    THREAD_SCHED_POINT();
   #pragma omp atomic
   count++;
 }
