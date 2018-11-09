@@ -1,4 +1,5 @@
 // RUN: %libomp-compile -lpthread && %libomp-run
+// REQUIRES: !abt
 #include <stdio.h>
 #include "omp_testsuite.h"
 
