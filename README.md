@@ -71,6 +71,8 @@ assumed to be non-existent or empty.
           -DCMAKE_INSTALL_PREFIX=/home/USERNAME/bolt-install \
           -DCMAKE_C_COMPILER=<C compiler> \
           -DCMAKE_CXX_COMPILER=<C++ compiler> \
+          -DOPENMP_TEST_C_COMPILER=<C compiler for testing> \
+          -DOPENMP_TEST_CXX_COMPILER=<C++ compiler for testing> \
           -DCMAKE_BUILD_TYPE=Release \
           -DLIBOMP_USE_ITT_NOTIFY=off \
           -DLIBOMP_USE_ARGOBOTS=on \
@@ -82,6 +84,8 @@ assumed to be non-existent or empty.
           -DCMAKE_INSTALL_PREFIX=/home/USERNAME/bolt-install \
           -DCMAKE_C_COMPILER=<C compiler> \
           -DCMAKE_CXX_COMPILER=<C++ compiler> \
+          -DOPENMP_TEST_C_COMPILER=<C compiler for testing> \
+          -DOPENMP_TEST_CXX_COMPILER=<C++ compiler for testing> \
           -DCMAKE_BUILD_TYPE=Release \
           -DLIBOMP_USE_ITT_NOTIFY=off \
           -DLIBOMP_USE_ARGOBOTS=on \
@@ -95,6 +99,8 @@ assumed to be non-existent or empty.
           -DCMAKE_INSTALL_PREFIX=/home/USERNAME/bolt-install \
           -DCMAKE_C_COMPILER=<C compiler> \
           -DCMAKE_CXX_COMPILER=<C++ compiler> \
+          -DOPENMP_TEST_C_COMPILER=<C compiler for testing> \
+          -DOPENMP_TEST_CXX_COMPILER=<C++ compiler for testing> \
           -DCMAKE_BUILD_TYPE=Release \
           -DLIBOMP_USE_ITT_NOTIFY=off \
           -DLIBOMP_USE_ARGOBOTS=on \
@@ -107,6 +113,8 @@ assumed to be non-existent or empty.
           -DCMAKE_INSTALL_PREFIX=/home/USERNAME/bolt-install \
           -DCMAKE_C_COMPILER=<C compiler> \
           -DCMAKE_CXX_COMPILER=<C++ compiler> \
+          -DOPENMP_TEST_C_COMPILER=<C compiler for testing> \
+          -DOPENMP_TEST_CXX_COMPILER=<C++ compiler for testing> \
           -DCMAKE_BUILD_TYPE=Release \
           -DLIBOMP_USE_ITT_NOTIFY=off \
           -DLIBOMP_USE_ARGOBOTS=on \
@@ -158,40 +166,17 @@ assumed to be non-existent or empty.
 2. Testing BOLT
 ===============
 
-To test BOLT, you can run the test suite in the testsuite directory with
-clang, Intel OpenMP compiler (icc), or gcc.
+To test BOLT, you can run the test suite.  Compilers for testing must be
+specified when you run cmake.
 
-For example, using clang with bash:
+For example, if llvm-lit is installed:
 
-  When you use the built-in Argobots,
+    cd bolt-build
+    NUM_PARALLEL_TESTS=16
+    llvm-lit runtime/test -v -j $NUM_PARALLEL_TESTS --timeout 600
 
-    cd ../bolt-VERSION/testsuite
-    export TEST_CC=clang
-    export TEST_CFLAGS="-g -O2 -fopenmp -I/home/USERNAME/bolt-install/include \
-                        -L/home/USERNAME/bolt-install/lib -lomp \
-                        -Wl,-rpath=/home/USERNAME/bolt-install/lib"
-    make ctest
-
-  When you use your own Argobots build,
-
-    cd ../bolt-VERSION/testsuite
-    export TEST_CC=clang
-    export TEST_CFLAGS="-g -O2 -fopenmp -I/home/USERNAME/bolt-install/include \
-                        -L/home/USERNAME/bolt-install/lib -lomp \
-                        -Wl,-rpath=/home/USERNAME/argobots-install/lib \
-                        -Wl,-rpath=/home/USERNAME/bolt-install/lib"
-    make ctest
-
-You can also specify the number of execution streams (ESs) when running the
-test suite:
-
-    export KMP_ABT_NUM_ESS=16
-    make ctest
-
-You may see some failures when running the test suite, but most of test
-programs should pass.  If you run into any problems on running the test suite,
-please follow step 3 below for reporting them to the BOLT developers and other
-users.
+If you run into any problems on running the test suite, please follow step 3
+below for reporting them to the BOLT developers and other users.
 
 -------------------------------------------------------------------------------
 
