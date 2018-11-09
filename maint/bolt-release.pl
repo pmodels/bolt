@@ -107,19 +107,12 @@ my $local_git_clone = "${tdir}/bolt-clone";
 
 # clone git repo
 print("===> Cloning git repo... ");
-run_cmd("git clone -b ${branch} ${git_repo} ${local_git_clone}");
+run_cmd("git clone --recursive -b ${branch} ${git_repo} ${local_git_clone}");
 print("done\n");
 
 # chdirs to $local_git_clone if valid
 check_git_repo($local_git_clone);
 print("\n");
-
-my $current_ver = `git show ${branch}:autogen.sh | grep BOLT_VERSION= | \
-                   sed -e 's/^BOLT_VERSION=\\(.*\\)/\\1/g'`;
-chomp $current_ver;
-if ("$current_ver" ne "$version") {
-    print("\tWARNING: version in autogen.sh ($current_ver) does not match user version ($version)\n\n");
-}
 
 if ($append_commit_id) {
     my $desc = `git describe --always ${branch}`;
@@ -137,21 +130,14 @@ print("===> Exporting code from git... ");
 run_cmd("rm -rf ${expdir}");
 run_cmd("mkdir -p ${expdir}");
 run_cmd("git archive ${branch} --prefix='bolt-${version}/' | tar -x -C $tdir");
-print("done\n");
-
-# Create CMakeLists.txt
-print("===> Creating CMakeLists.txt in the main codebase... ");
-chdir($expdir);
-{
-    my $cmd = "./autogen.sh -r";
-    run_cmd($cmd);
-}
+run_cmd("git submodule foreach --recursive \'git archive HEAD --prefix='' | tar -x -C `echo \${toplevel}/\${path} | sed -e s/clone/${version}/`'");
 print("done\n");
 
 # Remove unnecessary files
 print("===> Removing unnecessary files in the main codebase... ");
 chdir($expdir);
 run_cmd("find . -name .gitignore | xargs rm -rf");
+run_cmd("find . -name .gitmodules | xargs rm -rf");
 run_cmd("find . -name .tmp | xargs rm -rf");
 print("done\n");
 
