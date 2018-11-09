@@ -40,6 +40,8 @@
 #define ngo_sync() ((void)0)
 #endif /* KMP_MIC && USE_NGO_STORES */
 
+#if !KMP_USE_ABT
+
 void __kmp_print_structure(void); // Forward declaration
 
 // ---------------------------- Barrier Algorithms ----------------------------
@@ -1998,6 +2000,59 @@ void __kmp_fork_barrier(int gtid, int tid) {
   KA_TRACE(10, ("__kmp_fork_barrier: T#%d(%d:%d) is leaving\n", gtid,
                 team->t.t_id, tid));
 }
+
+#else // !KMP_USE_ABT
+
+int __kmp_barrier(enum barrier_type bt, int gtid, int is_split,
+                  size_t reduce_size, void *reduce_data,
+                  void (*reduce)(void *, void *)) {
+  int tid = __kmp_tid_from_gtid(gtid);
+  kmp_info_t *this_thr = __kmp_threads[gtid];
+  kmp_team_t *team = this_thr->th.th_team;
+  int status = 0;
+  ident_t *loc = this_thr->th.th_ident;
+  int ret;
+  KA_TRACE(15, ("__kmp_barrier: T#%d(%d:%d) has arrived\n",
+                gtid, __kmp_team_from_gtid(gtid)->t.t_id,
+                __kmp_tid_from_gtid(gtid)));
+  // Complete and free all child tasks.
+  __kmp_abt_wait_child_tasks(this_thr, FALSE);
+  if (!team->t.t_serialized) {
+    KMP_MB();
+    kmp_taskdata_t *taskdata = this_thr->th.th_current_task;
+    __kmp_abt_release_info(this_thr);
+    if (KMP_MASTER_TID(tid)) {
+      status = 0;
+      ret = ABT_barrier_wait(team->t.t_team_bar);
+      KMP_DEBUG_ASSERT(ret == ABT_SUCCESS);
+    } else {
+      status = 1;
+      ret = ABT_barrier_wait(team->t.t_team_bar);
+      KMP_DEBUG_ASSERT(ret == ABT_SUCCESS);
+    }
+    __kmp_abt_acquire_info_for_task(this_thr, taskdata);
+  } else { // Team is serialized.
+    status = 0;
+  }
+  KA_TRACE(15, ("__kmp_barrier: T#%d(%d:%d) is leaving with return value %d\n",
+                gtid, __kmp_team_from_gtid(gtid)->t.t_id,
+                __kmp_tid_from_gtid(gtid), status));
+  return status;
+}
+
+void __kmp_end_split_barrier(enum barrier_type bt, int gtid) {
+  int tid = __kmp_tid_from_gtid(gtid);
+  kmp_info_t *this_thr = __kmp_threads[gtid];
+  kmp_team_t *team = this_thr->th.th_team;
+  if (!team->t.t_serialized) {
+    if (KMP_MASTER_GTID(gtid)) {
+      int ret = ABT_barrier_wait(team->t.t_team_bar);
+      KMP_DEBUG_ASSERT(ret == ABT_SUCCESS);
+    }
+  }
+}
+
+#endif // KMP_USE_ABT
 
 void __kmp_setup_icv_copy(kmp_team_t *team, int new_nproc,
                           kmp_internal_control_t *new_icvs, ident_t *loc) {

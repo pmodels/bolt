@@ -17,7 +17,11 @@
 #include "kmp_dispatch_hier.h"
 #endif
 
+#if KMP_USE_ABT
+kmp_pth_key_t __kmp_gtid_threadprivate_key;
+#else
 kmp_key_t __kmp_gtid_threadprivate_key;
+#endif
 
 #if KMP_ARCH_X86 || KMP_ARCH_X86_64
 kmp_cpuinfo_t __kmp_cpuinfo = {0}; // Not initialized

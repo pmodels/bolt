@@ -62,7 +62,7 @@
 #error Unknown compiler
 #endif
 
-#if (KMP_OS_LINUX || KMP_OS_WINDOWS) && !KMP_OS_CNK
+#if (KMP_OS_LINUX || KMP_OS_WINDOWS) && !KMP_OS_CNK && !KMP_USE_ABT
 #define KMP_AFFINITY_SUPPORTED 1
 #if KMP_OS_WINDOWS && KMP_ARCH_X86_64
 #define KMP_GROUP_AFFINITY 1

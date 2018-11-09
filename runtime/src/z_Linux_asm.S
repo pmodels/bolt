@@ -529,6 +529,7 @@ __kmp_unnamed_critical_addr:
 # endif /* !KMP_ASM_INTRINS */
 
 
+#if !KMP_USE_ABT
 //------------------------------------------------------------------------
 // FUNCTION __kmp_load_x87_fpu_control_word
 //
@@ -657,6 +658,7 @@ KMP_LABEL(invoke_3):
 
 	DEBUG_INFO __kmp_invoke_microtask
 // -- End  __kmp_invoke_microtask
+#endif /* !KMP_USE_ABT */
 
 
 // kmp_uint64
@@ -1164,6 +1166,7 @@ KMP_LABEL(invoke_3):
         DEBUG_INFO __kmp_clear_x87_fpu_status_word
 
 
+#if !KMP_USE_ABT
 //------------------------------------------------------------------------
 // typedef void	(*microtask_t)( int *gtid, int *tid, ... );
 //
@@ -1333,6 +1336,7 @@ KMP_LABEL(kmp_1_exit):
 
 	DEBUG_INFO __kmp_invoke_microtask
 // -- End  __kmp_invoke_microtask
+#endif /* !KMP_USE_ABT */
 
 // kmp_uint64
 // __kmp_hardware_timestamp(void)
@@ -1366,6 +1370,7 @@ KMP_LABEL(kmp_1_exit):
 // '
 #if (KMP_OS_LINUX || KMP_OS_DARWIN) && KMP_ARCH_AARCH64
 
+#if !KMP_USE_ABT
 //------------------------------------------------------------------------
 //
 // typedef void	(*microtask_t)( int *gtid, int *tid, ... );
@@ -1475,11 +1480,13 @@ KMP_LABEL(kmp_1):
 
 	DEBUG_INFO __kmp_invoke_microtask
 // -- End  __kmp_invoke_microtask
+#endif /* !KMP_USE_ABT */
 
 #endif /* (KMP_OS_LINUX || KMP_OS_DARWIN) && KMP_ARCH_AARCH64 */
 
 #if KMP_ARCH_PPC64
 
+#if !KMP_USE_ABT
 //------------------------------------------------------------------------
 //
 // typedef void	(*microtask_t)( int *gtid, int *tid, ... );
@@ -1696,6 +1703,7 @@ __kmp_invoke_microtask:
 	.cfi_endproc
 
 // -- End  __kmp_invoke_microtask
+#endif /* !KMP_USE_ABT */
 
 #endif /* KMP_ARCH_PPC64 */
 

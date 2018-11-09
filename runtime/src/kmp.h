@@ -19,6 +19,12 @@
 
 /* #define BUILD_PARALLEL_ORDERED 1 */
 
+#if KMP_USE_ABT
+#include <abt.h>
+#define ABT_USE_PRIVATE_POOLS 1
+#define ABT_USE_SCHED_SLEEP 0
+#endif
+
 /* This fix replaces gettimeofday with clock_gettime for better scalability on
    the Altix.  Requires user code to be linked with -lrt. */
 //#define FIX_SGI_CLOCK
@@ -111,7 +117,7 @@ class kmp_stats_list;
 #endif
 #include "kmp_i18n.h"
 
-#define KMP_HANDLE_SIGNALS (KMP_OS_UNIX || KMP_OS_WINDOWS)
+#define KMP_HANDLE_SIGNALS ((KMP_OS_UNIX || KMP_OS_WINDOWS) && !KMP_USE_ABT)
 
 #include "kmp_wrapper_malloc.h"
 #if KMP_OS_UNIX
@@ -1172,6 +1178,18 @@ struct kmp_region_info {
 /* ---------------------------------------------------------------------- */
 /* ---------------------------------------------------------------------- */
 
+#if KMP_USE_ABT
+
+typedef ABT_thread kmp_thread_t;
+typedef ABT_key kmp_key_t;
+typedef ABT_thread kmp_abt_task_t;
+typedef ABT_barrier kmp_barrier_t;
+typedef pthread_key_t kmp_pth_key_t;
+
+extern kmp_pth_key_t __kmp_gtid_threadprivate_key;
+
+#else
+
 #if KMP_OS_WINDOWS
 typedef HANDLE kmp_thread_t;
 typedef DWORD kmp_key_t;
@@ -1183,6 +1201,8 @@ typedef pthread_key_t kmp_key_t;
 #endif
 
 extern kmp_key_t __kmp_gtid_threadprivate_key;
+
+#endif
 
 typedef struct kmp_sys_info {
   long maxrss; /* the maximum resident set size utilized (in kilobytes)     */
@@ -1802,7 +1822,11 @@ typedef enum kmp_bar_pat { /* Barrier communication patterns */
                            bp_last_bar /* Placeholder to mark the end */
 } kmp_bar_pat_e;
 
+#if KMP_USE_ABT
+/* BOLT does not use KMP barrier, so we need to copy icvs in a naive way. */
+#else
 #define KMP_BARRIER_ICV_PUSH 1
+#endif
 
 /* Record for holding the values of the internal controls stack records */
 typedef struct kmp_internal_control {
@@ -2313,6 +2337,11 @@ struct kmp_taskdata { /* aligned during dynamic allocation       */
 #if OMPT_SUPPORT
   ompt_task_info_t ompt_task_info;
 #endif
+#if KMP_USE_ABT
+  kmp_abt_task_t *td_task_queue; // child tasks
+  kmp_int32 td_tq_cur_size; // current size of td_task_queue
+  kmp_int32 td_tq_max_size; // maximum size of td_task_queue
+#endif
 }; // struct kmp_taskdata
 
 // Make sure padding above worked
@@ -2519,8 +2548,10 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   kmp_hier_private_bdata_t *th_hier_bar_data;
 #endif
 
+#if !KMP_USE_ABT
   /* Add the syncronizing data which is cache aligned and padded. */
   KMP_ALIGN_CACHE kmp_balign_t th_bar[bs_last_barrier];
+#endif
 
   KMP_ALIGN_CACHE volatile kmp_int32
       th_next_waiting; /* gtid+1 of next thread on lock wait queue, 0 if none */
@@ -2601,7 +2632,11 @@ typedef struct KMP_ALIGN_CACHE kmp_base_team {
   // Synchronization Data
   // ---------------------------------------------------------------------------
   KMP_ALIGN_CACHE kmp_ordered_team_t t_ordered;
+#if KMP_USE_ABT
+  kmp_barrier_t t_team_bar;
+#else
   kmp_balign_team_t t_bar[bs_last_barrier];
+#endif
   std::atomic<int> t_construct; // count of single directive encountered by team
   char pad[sizeof(kmp_lock_t)]; // padding to maintain performance on big iron
 
@@ -2751,6 +2786,10 @@ struct fortran_inx_info {
 };
 
 /* ------------------------------------------------------------------------ */
+
+#if KMP_USE_ABT
+extern volatile int __kmp_abt_init_global;
+#endif
 
 extern int __kmp_settings;
 extern int __kmp_duplicate_library_ok;
@@ -3335,7 +3374,9 @@ extern int __kmp_read_system_info(struct kmp_sys_info *info);
 extern void __kmp_create_monitor(kmp_info_t *th);
 #endif
 
+#if !KMP_USE_ABT
 extern void *__kmp_launch_thread(kmp_info_t *thr);
+#endif
 
 extern void __kmp_create_worker(int gtid, kmp_info_t *th, size_t stack_size);
 
@@ -3539,6 +3580,22 @@ extern kmp_uint64 __kmp_hardware_timestamp(void);
 extern int __kmp_read_from_file(char const *path, char const *format, ...);
 #endif
 
+#if KMP_USE_ABT
+extern void __kmp_abt_global_initialize(void);
+extern void __kmp_abt_global_destroy(void);
+extern void __kmp_abt_create_uber(int gtid, kmp_info_t *th, size_t stack_size);
+extern void __kmp_abt_join_worker(kmp_info_t *th);
+extern int __kmp_abt_create_task(kmp_info_t *th, kmp_task_t *task);
+extern void __kmp_abt_wait_child_tasks(kmp_info_t *th, int yield);
+extern kmp_info_t *__kmp_abt_bind_task_to_thread(kmp_team_t *team,
+                                                 kmp_taskdata_t *taskdata);
+extern void __kmp_abt_set_self_info(kmp_info_t *th);
+extern kmp_info_t *__kmp_abt_get_self_info(void);
+extern void __kmp_abt_release_info(kmp_info_t *th);
+extern void __kmp_abt_acquire_info_for_task(kmp_info_t *th,
+                                            kmp_taskdata_t *taskdata);
+#endif
+
 /* ------------------------------------------------------------------------ */
 //
 // Assembly routines that have no compiler intrinsic replacement
@@ -3548,6 +3605,8 @@ extern int __kmp_read_from_file(char const *path, char const *format, ...);
 
 extern void __kmp_query_cpuid(kmp_cpuinfo_t *p);
 
+#if !KMP_USE_ABT
+
 #define __kmp_load_mxcsr(p) _mm_setcsr(*(p))
 static inline void __kmp_store_mxcsr(kmp_uint32 *p) { *p = _mm_getcsr(); }
 
@@ -3555,6 +3614,8 @@ extern void __kmp_load_x87_fpu_control_word(kmp_int16 *p);
 extern void __kmp_store_x87_fpu_control_word(kmp_int16 *p);
 extern void __kmp_clear_x87_fpu_status_word();
 #define KMP_X86_MXCSR_MASK 0xffffffc0 /* ignore status flags (6 lsb) */
+
+#endif // !KMP_USE_ABT
 
 #endif /* KMP_ARCH_X86 || KMP_ARCH_X86_64 */
 

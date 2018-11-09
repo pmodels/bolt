@@ -546,7 +546,7 @@ void __kmpc_end_serialized_parallel(ident_t *loc, kmp_int32 global_tid) {
 
 /* return to the parallel section */
 
-#if KMP_ARCH_X86 || KMP_ARCH_X86_64
+#if (KMP_ARCH_X86 || KMP_ARCH_X86_64) && !KMP_USE_ABT
     if (__kmp_inherit_fp_control && serial_team->t.t_fp_control_saved) {
       __kmp_clear_x87_fpu_status_word();
       __kmp_load_x87_fpu_control_word(&serial_team->t.t_x87_fpu_control_word);

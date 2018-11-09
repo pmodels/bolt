@@ -3912,6 +3912,14 @@ static void __kmp_stg_parse_lock_kind(char const *name, char const *value,
     return;
   }
 
+#if KMP_USE_ABT
+  if (true) {
+      // BOLT only supports a queuing lock.
+      KMP_WARNING(LockTypeNotSupported, name, value);
+      __kmp_user_lock_kind = lk_queuing;
+      KMP_STORE_LOCK_SEQ(queuing);
+  } else
+#endif
   if (__kmp_str_match("tas", 2, value) ||
       __kmp_str_match("test and set", 2, value) ||
       __kmp_str_match("test_and_set", 2, value) ||

@@ -369,7 +369,11 @@ int FTN_STDCALL KMP_EXPAND_NAME(FTN_GET_THREAD_NUM)(void) {
 #else
   int gtid;
 
-#if KMP_OS_DARWIN || KMP_OS_FREEBSD || KMP_OS_NETBSD
+#if KMP_USE_ABT
+  if (!__kmp_init_parallel)
+    return 0;
+  gtid = __kmp_gtid_get_specific();
+#elif KMP_OS_DARWIN || KMP_OS_FREEBSD || KMP_OS_NETBSD
   gtid = __kmp_entry_gtid();
 #elif KMP_OS_WINDOWS
   if (!__kmp_init_parallel ||
