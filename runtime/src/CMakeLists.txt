@@ -51,6 +51,10 @@ if(${LIBOMP_USE_HWLOC})
   include_directories(${LIBOMP_HWLOC_INSTALL_DIR}/include)
 endif()
 
+if(${LIBOMP_USE_ARGOBOTS})
+  include_directories(${LIBOMP_ARGOBOTS_INSTALL_DIR}/include)
+endif()
+
 # Getting correct source files to build library
 set(LIBOMP_CFILES)
 set(LIBOMP_CXXFILES)
