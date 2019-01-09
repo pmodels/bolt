@@ -145,6 +145,9 @@ endif()
 libomp_get_ldflags(LIBOMP_CONFIGURED_LDFLAGS)
 
 add_library(omp ${LIBOMP_LIBRARY_KIND} ${LIBOMP_SOURCE_FILES})
+if(${LIBOMP_USE_BUILTIN_ARGOBOTS})
+  add_dependencies(omp libabt)
+endif()
 
 set_target_properties(omp PROPERTIES
   PREFIX "" SUFFIX "" OUTPUT_NAME "${LIBOMP_LIB_FILE}"
