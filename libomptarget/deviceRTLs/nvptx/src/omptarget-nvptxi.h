@@ -16,7 +16,7 @@
 // Task Descriptor
 ////////////////////////////////////////////////////////////////////////////////
 
-INLINE omp_sched_t omptarget_nvptx_TaskDescr::GetRuntimeSched() {
+INLINE omp_sched_t omptarget_nvptx_TaskDescr::GetRuntimeSched() const {
   // sched starts from 1..4; encode it as 0..3; so add 1 here
   uint8_t rc = (items.flags & TaskDescr_SchedMask) + 1;
   return (omp_sched_t)rc;
@@ -31,7 +31,8 @@ INLINE void omptarget_nvptx_TaskDescr::SetRuntimeSched(omp_sched_t sched) {
   items.flags |= val;
 }
 
-INLINE void omptarget_nvptx_TaskDescr::InitLevelZeroTaskDescr() {
+INLINE void
+omptarget_nvptx_TaskDescr::InitLevelZeroTaskDescr(bool isSPMDExecutionMode) {
   // slow method
   // flag:
   //   default sched is static,
@@ -39,7 +40,7 @@ INLINE void omptarget_nvptx_TaskDescr::InitLevelZeroTaskDescr() {
   //   not in parallel
 
   items.flags = 0;
-  items.nthreads = GetNumberOfProcsInTeam();
+  items.nthreads = GetNumberOfProcsInTeam(isSPMDExecutionMode);
   ;                                // threads: whatever was alloc by kernel
   items.threadId = 0;         // is master
   items.threadsInTeam = 1;    // sequential
@@ -154,7 +155,7 @@ INLINE void omptarget_nvptx_TaskDescr::RestoreLoopData() const {
 ////////////////////////////////////////////////////////////////////////////////
 
 INLINE omptarget_nvptx_TaskDescr *
-omptarget_nvptx_ThreadPrivateContext::GetTopLevelTaskDescr(int tid) {
+omptarget_nvptx_ThreadPrivateContext::GetTopLevelTaskDescr(int tid) const {
   ASSERT0(
       LT_FUSSY, tid < MAX_THREADS_PER_TEAM,
       "Getting top level, tid is larger than allocated data structure size");
@@ -168,31 +169,17 @@ omptarget_nvptx_ThreadPrivateContext::InitThreadPrivateContext(int tid) {
   topTaskDescr[tid] = NULL;
   // no num threads value has been pushed
   nextRegion.tnum[tid] = 0;
-  // priv counter init to zero
-  priv[tid] = 0;
   // the following don't need to be init here; they are init when using dyn
   // sched
   // current_Event, events_Number, chunk, num_Iterations, schedule
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Work Descriptor
-////////////////////////////////////////////////////////////////////////////////
-
-INLINE void omptarget_nvptx_WorkDescr::InitWorkDescr() {
-  cg.Clear(); // start and stop to zero too
-  // threadsInParallelTeam does not need to be init (done in start parallel)
-  hasCancel = FALSE;
-}
-
-////////////////////////////////////////////////////////////////////////////////
 // Team Descriptor
 ////////////////////////////////////////////////////////////////////////////////
 
-INLINE void omptarget_nvptx_TeamDescr::InitTeamDescr() {
-  levelZeroTaskDescr.InitLevelZeroTaskDescr();
-  workDescrForActiveParallel.InitWorkDescr();
-  // omp_init_lock(criticalLock);
+INLINE void omptarget_nvptx_TeamDescr::InitTeamDescr(bool isSPMDExecutionMode) {
+  levelZeroTaskDescr.InitLevelZeroTaskDescr(isSPMDExecutionMode);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -213,6 +200,35 @@ INLINE omptarget_nvptx_TaskDescr *getMyTopTaskDescriptor(int threadId) {
   return omptarget_nvptx_threadPrivateContext->GetTopLevelTaskDescr(threadId);
 }
 
-INLINE omptarget_nvptx_TaskDescr *getMyTopTaskDescriptor() {
-  return getMyTopTaskDescriptor(GetLogicalThreadIdInBlock());
+INLINE omptarget_nvptx_TaskDescr *
+getMyTopTaskDescriptor(bool isSPMDExecutionMode) {
+  return getMyTopTaskDescriptor(GetLogicalThreadIdInBlock(isSPMDExecutionMode));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Memory management runtime functions.
+////////////////////////////////////////////////////////////////////////////////
+
+INLINE void omptarget_nvptx_SimpleMemoryManager::Release() {
+  ASSERT0(LT_FUSSY, usedSlotIdx < MAX_SM,
+          "SlotIdx is too big or uninitialized.");
+  ASSERT0(LT_FUSSY, usedMemIdx < OMP_STATE_COUNT,
+          "MemIdx is too big or uninitialized.");
+  MemDataTy &MD = MemData[usedSlotIdx];
+  atomicExch((unsigned *)&MD.keys[usedMemIdx], 0);
+}
+
+INLINE const void *omptarget_nvptx_SimpleMemoryManager::Acquire(const void *buf,
+                                                                size_t size) {
+  ASSERT0(LT_FUSSY, usedSlotIdx < MAX_SM,
+          "SlotIdx is too big or uninitialized.");
+  const unsigned sm = usedSlotIdx;
+  MemDataTy &MD = MemData[sm];
+  unsigned i = hash(GetBlockIdInKernel());
+  while (atomicCAS((unsigned *)&MD.keys[i], 0, 1) != 0) {
+    i = hash(i + 1);
+  }
+  usedSlotIdx = sm;
+  usedMemIdx = i;
+  return static_cast<const char *>(buf) + (sm * OMP_STATE_COUNT + i) * size;
 }

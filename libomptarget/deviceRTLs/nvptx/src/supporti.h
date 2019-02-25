@@ -33,6 +33,59 @@ INLINE bool isRuntimeInitialized() {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// Execution Modes based on location parameter fields
+////////////////////////////////////////////////////////////////////////////////
+
+INLINE bool checkSPMDMode(kmp_Ident *loc) {
+  if (!loc)
+    return isSPMDMode();
+
+  // If SPMD is true then we are not in the UNDEFINED state so
+  // we can return immediately.
+  if (loc->reserved_2 & KMP_IDENT_SPMD_MODE)
+    return true;
+
+  // If not in SPMD mode and runtime required is a valid
+  // combination of flags so we can return immediately.
+  if (!(loc->reserved_2 & KMP_IDENT_SIMPLE_RT_MODE))
+    return false;
+
+  // We are in underfined state.
+  return isSPMDMode();
+}
+
+INLINE bool checkGenericMode(kmp_Ident *loc) {
+  return !checkSPMDMode(loc);
+}
+
+INLINE bool checkRuntimeUninitialized(kmp_Ident *loc) {
+  if (!loc)
+    return isRuntimeUninitialized();
+
+  // If runtime is required then we know we can't be
+  // in the undefined mode. We can return immediately.
+  if (!(loc->reserved_2 & KMP_IDENT_SIMPLE_RT_MODE))
+    return false;
+
+  // If runtime is required then we need to check is in
+  // SPMD mode or not. If not in SPMD mode then we end
+  // up in the UNDEFINED state that marks the orphaned
+  // functions.
+  if (loc->reserved_2 & KMP_IDENT_SPMD_MODE)
+    return true;
+
+  // Check if we are in an UNDEFINED state. Undefined is denoted by
+  // non-SPMD + noRuntimeRequired which is a combination that
+  // cannot actually happen. Undefined states is used to mark orphaned
+  // functions.
+  return isRuntimeUninitialized();
+}
+
+INLINE bool checkRuntimeInitialized(kmp_Ident *loc) {
+  return !checkRuntimeUninitialized(loc);
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // support: get info from machine
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -77,13 +130,11 @@ INLINE int GetNumberOfWorkersInTeam() { return GetMasterThreadID(); }
 // or a serial region by the master.  If the master (whose CUDA thread
 // id is GetMasterThreadID()) calls this routine, we return 0 because
 // it is a shadow for the first worker.
-INLINE int GetLogicalThreadIdInBlock() {
-  //  return GetThreadIdInBlock() % GetMasterThreadID();
-
+INLINE int GetLogicalThreadIdInBlock(bool isSPMDExecutionMode) {
   // Implemented using control flow (predication) instead of with a modulo
   // operation.
   int tid = GetThreadIdInBlock();
-  if (isGenericMode() && tid >= GetMasterThreadID())
+  if (!isSPMDExecutionMode && tid >= GetMasterThreadID())
     return 0;
   else
     return tid;
@@ -101,9 +152,13 @@ INLINE int GetOmpThreadId(int threadId, bool isSPMDExecutionMode,
   int rc;
 
   if (isRuntimeUninitialized) {
-    rc = GetThreadIdInBlock();
-    if (!isSPMDExecutionMode && rc >= GetMasterThreadID())
+    ASSERT0(LT_FUSSY, isSPMDExecutionMode,
+            "Uninitialized runtime with non-SPMD mode.");
+    // For level 2 parallelism all parallel regions are executed sequentially.
+    if (parallelLevel > 0)
       rc = 0;
+    else
+      rc = GetThreadIdInBlock();
   } else {
     omptarget_nvptx_TaskDescr *currTaskDescr =
         omptarget_nvptx_threadPrivateContext->GetTopLevelTaskDescr(threadId);
@@ -118,8 +173,13 @@ INLINE int GetNumberOfOmpThreads(int threadId, bool isSPMDExecutionMode,
   int rc;
 
   if (isRuntimeUninitialized) {
-    rc = isSPMDExecutionMode ? GetNumberOfThreadsInBlock()
-                             : GetNumberOfThreadsInBlock() - WARPSIZE;
+    ASSERT0(LT_FUSSY, isSPMDExecutionMode,
+            "Uninitialized runtime with non-SPMD mode.");
+    // For level 2 parallelism all parallel regions are executed sequentially.
+    if (parallelLevel > 0)
+      rc = 1;
+    else
+      rc = GetNumberOfThreadsInBlock();
   } else {
     omptarget_nvptx_TaskDescr *currTaskDescr =
         omptarget_nvptx_threadPrivateContext->GetTopLevelTaskDescr(threadId);
@@ -152,13 +212,15 @@ INLINE int IsTeamMaster(int ompThreadId) { return (ompThreadId == 0); }
 // get OpenMP number of procs
 
 // Get the number of processors in the device.
-INLINE int GetNumberOfProcsInDevice() {
-  if (isGenericMode())
+INLINE int GetNumberOfProcsInDevice(bool isSPMDExecutionMode) {
+  if (!isSPMDExecutionMode)
     return GetNumberOfWorkersInTeam();
   return GetNumberOfThreadsInBlock();
 }
 
-INLINE int GetNumberOfProcsInTeam() { return GetNumberOfProcsInDevice(); }
+INLINE int GetNumberOfProcsInTeam(bool isSPMDExecutionMode) {
+  return GetNumberOfProcsInDevice(isSPMDExecutionMode);
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Memory
@@ -169,20 +231,20 @@ INLINE unsigned long PadBytes(unsigned long size,
 {
   // compute the necessary padding to satisfy alignment constraint
   ASSERT(LT_FUSSY, (alignment & (alignment - 1)) == 0,
-         "alignment %ld is not a power of 2\n", alignment);
+         "alignment %lu is not a power of 2\n", alignment);
   return (~(unsigned long)size + 1) & (alignment - 1);
 }
 
 INLINE void *SafeMalloc(size_t size, const char *msg) // check if success
 {
   void *ptr = malloc(size);
-  PRINT(LD_MEM, "malloc data of size %zu for %s: 0x%llx\n", size, msg, P64(ptr));
-  ASSERT(LT_SAFETY, ptr, "failed to allocate %zu bytes for %s\n", size, msg);
+  PRINT(LD_MEM, "malloc data of size %llu for %s: 0x%llx\n",
+        (unsigned long long)size, msg, (unsigned long long)ptr);
   return ptr;
 }
 
 INLINE void *SafeFree(void *ptr, const char *msg) {
-  PRINT(LD_MEM, "free data ptr 0x%llx for %s\n", P64(ptr), msg);
+  PRINT(LD_MEM, "free data ptr 0x%llx for %s\n", (unsigned long long)ptr, msg);
   free(ptr);
   return NULL;
 }
