@@ -5,6 +5,7 @@
 // RUN: env OMP_DISPLAY_AFFINITY=true OMP_NUM_THREADS=3 %libomp-run | %python %S/check.py -c 'CHECK-3' %s
 // RUN: env OMP_DISPLAY_AFFINITY=true OMP_NUM_THREADS=4 %libomp-run | %python %S/check.py -c 'CHECK-4' %s
 // RUN: env OMP_DISPLAY_AFFINITY=true OMP_NUM_THREADS=8 %libomp-run | %python %S/check.py -c 'CHECK-8' %s
+// REQUIRES: !abt
 
 #include <stdio.h>
 #include <stdlib.h>

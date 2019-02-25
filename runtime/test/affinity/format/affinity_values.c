@@ -4,7 +4,7 @@
 // RUN: env OMP_PROC_BIND=close OMP_PLACES=sockets %libomp-run
 // RUN: env KMP_AFFINITY=compact %libomp-run
 // RUN: env KMP_AFFINITY=scatter %libomp-run
-// REQUIRES: affinity
+// REQUIRES: affinity && !abt
 
 #include <stdio.h>
 #include <stdlib.h>

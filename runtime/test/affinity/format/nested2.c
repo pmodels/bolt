@@ -1,4 +1,5 @@
 // RUN: %libomp-compile && env OMP_DISPLAY_AFFINITY=true OMP_PLACES=threads OMP_PROC_BIND=spread,close KMP_HOT_TEAMS_MAX_LEVEL=2 %libomp-run | %python %S/check.py -c 'CHECK' %s
+// REQUIRES: !abt
 
 #include <stdio.h>
 #include <stdlib.h>
