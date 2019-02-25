@@ -1,4 +1,5 @@
 // RUN: %libomp-compile-and-run
+// UNSUPPORTED: icc-16, icc-17, icc-18
 #include <stdio.h>
 #include "omp_testsuite.h"
 
