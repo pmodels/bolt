@@ -16,21 +16,21 @@ endif()
 
 if(${LIBOMP_USE_BUILTIN_ARGOBOTS})
   # Use the built-in Argobots
-  set(ABT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/argobots)
+  set(ABT_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/argobots)
   set(ABT_BUILD_DIR ${CMAKE_CURRENT_BINARY_DIR}/argobots)
   set(ABT_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/argobots/install)
-  set(ABT_AUTOGEN ${ABT_DIR}/autogen.sh)
-  set(ABT_CONFIGURE ${ABT_DIR}/configure)
+  set(ABT_AUTOGEN ${ABT_SRC_DIR}/autogen.sh)
+  set(ABT_CONFIGURE ${ABT_SRC_DIR}/configure)
   if ((NOT EXISTS ${ABT_CONFIGURE}) OR (${ABT_AUTOGEN} IS_NEWER_THAN ${ABT_CONFIGURE}))
     execute_process(
       COMMAND ./autogen.sh
-      WORKING_DIRECTORY ${ABT_DIR}
+      WORKING_DIRECTORY ${ABT_SRC_DIR}
     )
   endif()
 
   include(ExternalProject)
   ExternalProject_Add(libabt
-    SOURCE_DIR ${ABT_DIR}
+    SOURCE_DIR ${ABT_SRC_DIR}
     BINARY_DIR ${ABT_BUILD_DIR}
     CONFIGURE_COMMAND ${ABT_CONFIGURE} --prefix=${ABT_INSTALL_DIR} CC=${CMAKE_C_COMPILER}
   )
