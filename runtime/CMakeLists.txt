@@ -147,12 +147,6 @@ if(LIBOMP_USE_ARGOBOTS)
 else()
   set(BOLT_THREAD_TYPE BOLT_THREAD_NATIVE)
 endif()
-if(${LIBOMP_USE_BUILTIN_ARGOBOTS})
-  set(LIBOMP_ARGOBOTS_INSTALL_DIR ${CMAKE_INSTALL_PREFIX})
-else()
-  set(LIBOMP_ARGOBOTS_INSTALL_DIR /usr/local CACHE PATH
-    "Install path for Argobots")
-endif()
 
 # Get the build number from kmp_version.cpp
 libomp_get_build_number("${CMAKE_CURRENT_SOURCE_DIR}" LIBOMP_VERSION_BUILD)
