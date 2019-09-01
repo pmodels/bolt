@@ -485,10 +485,10 @@ int __kmp_initial_threads_capacity(int req_nproc) {
 
   /* MIN( MAX( 32, 4 * $OMP_NUM_THREADS, 4 * omp_get_num_procs() ),
    * __kmp_max_nth) */
-  if (nth < (4 * req_nproc))
-    nth = (4 * req_nproc);
-  if (nth < (4 * __kmp_xproc))
-    nth = (4 * __kmp_xproc);
+  if (nth < (512 * req_nproc))
+    nth = (512 * req_nproc);
+  if (nth < (512 * __kmp_xproc))
+    nth = (512 * __kmp_xproc);
 
   if (nth > __kmp_max_nth)
     nth = __kmp_max_nth;
