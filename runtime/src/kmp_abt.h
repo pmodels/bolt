@@ -21,6 +21,9 @@
 #define ABT_USE_PRIVATE_POOLS 1
 #define ABT_USE_SCHED_SLEEP 0
 
+#define KMP_ABT_FORK_NUM_WAYS_DEFAULT 4
+#define KMP_ABT_FORK_CUTOFF_DEFAULT 2
+
 // ES-local data.
 typedef struct kmp_abt_local {
   /* ------------------------------------------------------------------------ */
@@ -40,6 +43,8 @@ typedef struct kmp_abt_global {
   /* ------------------------------------------------------------------------ */
   // Mostly read only
   int num_xstreams;
+  int fork_num_ways;
+  int fork_cutoff;
 
   // ES-local data.
   kmp_abt_local *locals;

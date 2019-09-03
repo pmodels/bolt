@@ -2546,6 +2546,10 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   int th_prev_level; /* previous level for affinity format */
   int th_prev_num_threads; /* previous num_threads for affinity format */
 #endif
+#if KMP_USE_ABT
+  // For N-way thread creation.
+  int th_creation_group_end_tid;
+#endif /* KMP_USE_ABT */
 #if USE_ITT_BUILD
   kmp_uint64 th_bar_arrive_time; /* arrival to barrier timestamp */
   kmp_uint64 th_bar_min_time; /* minimum arrival time at the barrier */
