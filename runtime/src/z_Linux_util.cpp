@@ -3393,17 +3393,60 @@ kmp_info_t *__kmp_abt_get_self_info(void) {
 
 static void __kmp_abt_initialize(void) {
   int status;
-  char *env;
   int num_xstreams;
   int i, k;
+  kmp_abt_affinity_places_t *p_affinity_places = NULL;
 
-  env = getenv("KMP_ABT_NUM_ESS");
-  if (env) {
-    num_xstreams = atoi(env);
-    if (num_xstreams < __kmp_xproc)
-      __kmp_xproc = num_xstreams;
-  } else {
-    num_xstreams = __kmp_xproc;
+  {
+    int verbose = 0;
+    const char *env = getenv("KMP_ABT_NUM_ESS");
+    if (env) {
+      num_xstreams = atoi(env);
+      if (num_xstreams < __kmp_xproc)
+        __kmp_xproc = num_xstreams;
+    } else {
+      num_xstreams = __kmp_xproc;
+    }
+    env = getenv("OMP_PLACES");
+    if (!env) {
+      env = getenv("KMP_AFFINITY");
+      if (!env) {
+        env = "threads";
+      } else {
+        if (verbose)
+          printf("[warning] BOLT does not support KMP_AFFINITY; "
+                 "parse it as OMP_PLACES.\n");
+      }
+    }
+    p_affinity_places = __kmp_abt_parse_affinity(num_xstreams, env, strlen(env),
+                                                 verbose);
+    {
+      bool failure = false;
+      for (int rank = 0; rank < num_xstreams; rank++) {
+        int num_assoc_places = 0;
+        int num_places = p_affinity_places->num_places;
+        for (int place_id = 0; place_id < num_places; place_id++) {
+          kmp_abt_affinity_place_t *p_place =
+              p_affinity_places->p_places[place_id];
+          for (int i = 0, num_ranks = p_place->num_ranks; i < num_ranks; i++) {
+            if (p_place->ranks[i] == rank)
+              num_assoc_places++;
+          }
+        }
+        if (num_assoc_places > 1) {
+          failure = true;
+          break;
+        }
+      }
+      if (failure) {
+        printf("[warning] More than one place are associated with the same "
+               "processor; fall back to a default affinity.\n");
+        __kmp_abt_affinity_places_free(p_affinity_places);
+        p_affinity_places = __kmp_abt_parse_affinity(num_xstreams, "threads",
+                                                     strlen("threads"),
+                                                     verbose);
+      }
+    }
   }
   __kmp_abt_global.fork_cutoff = KMP_ABT_FORK_CUTOFF_DEFAULT;
   __kmp_abt_global.fork_num_ways = KMP_ABT_FORK_NUM_WAYS_DEFAULT;
@@ -3413,8 +3456,34 @@ static void __kmp_abt_initialize(void) {
   __kmp_abt_global.locals = (kmp_abt_local *)__kmp_allocate
       (sizeof(kmp_abt_local) * num_xstreams);
   __kmp_abt_global.num_xstreams = num_xstreams;
+  for (int rank = 0; rank < num_xstreams; rank++) {
+    __kmp_abt_global.locals[rank].place_id = -1;
+    __kmp_abt_global.locals[rank].place_pool = ABT_POOL_NULL;
+  }
 
-  /* Create pools */
+  /* Create place pools. */
+  const int num_places = p_affinity_places->num_places;
+  KMP_ASSERT(num_places != 0);
+  ABT_pool *place_pools = (ABT_pool *)__kmp_allocate(sizeof(ABT_pool)
+                                                     * num_places);
+  __kmp_abt_global.num_places = num_places;
+  __kmp_abt_global.place_pools = place_pools;
+  for (int place_id = 0; place_id < num_places; place_id++) {
+    const int num_ranks = p_affinity_places->p_places[place_id]->num_ranks;
+    ABT_pool_access access = (num_ranks == 1) ? ABT_POOL_ACCESS_MPSC
+                                              : ABT_POOL_ACCESS_MPMC;
+    status = ABT_pool_create_basic(ABT_POOL_FIFO, access, ABT_TRUE,
+                                   &place_pools[place_id]);
+    KMP_CHECK_SYSFAIL("ABT_pool_create_basic", status);
+    for (int i = 0; i < num_ranks; i++) {
+      int rank = p_affinity_places->p_places[place_id]->ranks[i];
+      __kmp_abt_global.locals[rank].place_id = place_id;
+      __kmp_abt_global.locals[rank].place_pool = place_pools[place_id];
+    }
+  }
+  __kmp_abt_affinity_places_free(p_affinity_places);
+
+  /* Create shared/private pools */
   for (i = 0; i < num_xstreams; i++) {
     status = ABT_pool_create_basic(ABT_POOL_FIFO, ABT_POOL_ACCESS_MPMC,
                                    ABT_TRUE,
@@ -3448,7 +3517,11 @@ static void __kmp_abt_initialize(void) {
       my_pools[k] =
           __kmp_abt_global.locals[(i + k) % num_xstreams].shared_pool;
     }
-    status = ABT_sched_create(&sched_def, num_xstreams, my_pools,
+    int num_pools = num_xstreams;
+    if (__kmp_abt_global.locals[i].place_id != -1) {
+      my_pools[num_pools++] = __kmp_abt_global.locals[i].place_pool;
+    }
+    status = ABT_sched_create(&sched_def, num_pools, my_pools,
                               config, &__kmp_abt_global.locals[i].sched);
     KMP_CHECK_SYSFAIL("ABT_sched_create", status);
   }
@@ -3487,8 +3560,10 @@ static void __kmp_abt_finalize(void) {
   }
 
   __kmp_free(__kmp_abt_global.locals);
+  __kmp_free(__kmp_abt_global.place_pools);
   __kmp_abt_global.num_xstreams = 0;
   __kmp_abt_global.locals = NULL;
+  __kmp_abt_global.place_pools = NULL;
 }
 
 volatile int __kmp_abt_init_global = FALSE;
@@ -3521,8 +3596,12 @@ static void __kmp_abt_sched_run(ABT_sched sched) {
   uint32_t work_count = 0;
   __kmp_abt_sched_data_t *p_data;
   int num_pools, num_shared_pools;
+  int num_xstreams = __kmp_abt_global.num_xstreams;
+  int rank;
+  ABT_xstream_self_rank(&rank);
   ABT_pool *pools;
   ABT_pool *shared_pools;
+  ABT_pool place_pool;
   ABT_unit unit;
   unsigned seed = time(NULL);
 
@@ -3538,12 +3617,25 @@ static void __kmp_abt_sched_run(ABT_sched sched) {
   ABT_sched_get_pools(sched, num_pools, 0, pools);
 
   shared_pools = pools;
-  num_shared_pools = num_pools;
+  num_shared_pools = __kmp_abt_global.num_xstreams;
+  place_pool = __kmp_abt_global.locals[rank].place_pool;
 
   int sleep_cnt = 0;
   while (1) {
     int run_cnt = 0;
     size_t size;
+
+    /* From the place pool */
+    if (place_pool != ABT_POOL_NULL) {
+      ABT_pool_get_size(place_pool, &size);
+      if (size != 0) {
+        ABT_pool_pop(place_pool, &unit);
+        if (unit != ABT_UNIT_NULL) {
+          ABT_xstream_run_unit(unit, place_pool);
+          run_cnt++;
+        }
+      }
+    }
 
     /* From the shared pool */
     ABT_pool_get_size(shared_pools[0], &size);

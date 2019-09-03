@@ -33,6 +33,8 @@ typedef struct kmp_abt_local {
 
   // Scheduler
   ABT_pool shared_pool;
+  int place_id;
+  ABT_pool place_pool;
   /* ------------------------------------------------------------------------ */
 } __attribute__((aligned(CACHE_LINE))) kmp_abt_local_t;
 
@@ -43,6 +45,8 @@ typedef struct kmp_abt_global {
   int num_xstreams;
   int fork_num_ways;
   int fork_cutoff;
+  int num_places;
+  ABT_pool *place_pools;
 
   // ES-local data.
   kmp_abt_local *locals;
