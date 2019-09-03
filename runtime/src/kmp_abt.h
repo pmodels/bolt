@@ -52,5 +52,23 @@ typedef struct kmp_abt_global {
 
 extern kmp_abt_global_t __kmp_abt_global;
 
+typedef struct kmp_abt_affinity_place {
+  size_t num_ranks;
+  int *ranks;
+} kmp_abt_affinity_place_t;
+
+typedef struct kmp_abt_affinity_places {
+  size_t num_places;
+  kmp_abt_affinity_place_t **p_places;
+} kmp_abt_affinity_places_t;
+
+extern kmp_abt_affinity_places_t *__kmp_abt_parse_affinity(int num_xstreams,
+                                                           const char *str,
+                                                           size_t len,
+                                                           bool verbose);
+extern int __kmp_abt_affinity_place_find
+    (const kmp_abt_affinity_place_t *p_place, int rank);
+extern void __kmp_abt_affinity_places_free(kmp_abt_affinity_places_t *p_places);
+
 #endif // KMP_USE_ABT
 #endif // KMP_ABT_H
