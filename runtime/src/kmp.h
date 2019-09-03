@@ -2832,6 +2832,9 @@ typedef struct kmp_base_root {
   kmp_lock_t r_begin_lock;
   volatile int r_begin;
   int r_blocktime; /* blocktime for this root and descendants */
+#if KMP_REMOVE_FORKJOIN_LOCK
+  // r_cg_nthreads must be updated atomically.
+#endif
   int r_cg_nthreads; // count of active threads in a contention group
 } kmp_base_root_t;
 
@@ -3017,6 +3020,10 @@ extern int __kmp_max_nth;
 // maximum total number of concurrently-existing threads in a contention group
 extern int __kmp_cg_max_nth;
 extern int __kmp_teams_max_nth; // max threads used in a teams construct
+#if KMP_REMOVE_FORKJOIN_LOCK
+/* __kmp_threads_capacity must be protected by __kmp_threads_lock */
+/* write: lock  read: anytime */
+#endif
 extern int __kmp_threads_capacity; /* capacity of the arrays __kmp_threads and
                                       __kmp_root */
 extern int __kmp_dflt_team_nth; /* default number of threads in a parallel
@@ -3129,6 +3136,7 @@ extern int __kmp_omp_cancellation; /* TRUE or FALSE */
 
 /* ------------------------------------------------------------------------- */
 
+#if !KMP_REMOVE_FORKJOIN_LOCK
 /* the following are protected by the fork/join lock */
 /* write: lock  read: anytime */
 extern kmp_info_t **__kmp_threads; /* Descriptors for the threads */
@@ -3147,6 +3155,30 @@ extern std::atomic<int> __kmp_thread_pool_active_nth;
 
 extern kmp_root_t **__kmp_root; /* root of thread hierarchy */
 /* end data protected by fork/join lock */
+#else
+/* write: lock  read: anytime */
+extern kmp_info_t **__kmp_threads; /* Descriptors for the threads */
+extern kmp_bootstrap_lock_t __kmp_threads_lock;
+/* read/write: lock */
+extern volatile kmp_team_t *__kmp_team_pool;
+extern kmp_bootstrap_lock_t __kmp_team_pool_lock;
+/* read/write: lock */
+extern volatile kmp_info_t *__kmp_thread_pool;
+extern kmp_info_t *__kmp_thread_pool_insert_pt;
+extern kmp_bootstrap_lock_t __kmp_thread_pool_lock;
+
+// Must be updated atomically
+// total num threads reachable from some root thread including all root threads
+extern volatile int __kmp_nth;
+/* total number of threads reachable from some root thread including all root
+   threads, and those in the thread pool */
+extern volatile int __kmp_all_nth;
+extern int __kmp_thread_pool_nth;
+extern std::atomic<int> __kmp_thread_pool_active_nth;
+
+extern kmp_root_t **__kmp_root; /* root of thread hierarchy */
+#endif
+
 /* ------------------------------------------------------------------------- */
 
 #define __kmp_get_gtid() __kmp_get_global_thread_id()

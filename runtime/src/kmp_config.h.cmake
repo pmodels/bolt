@@ -80,6 +80,9 @@
 #cmakedefine01 LIBOMP_USE_ARGOBOTS
 #define KMP_USE_ABT LIBOMP_USE_ARGOBOTS
 
+#cmakedefine01 LIBOMP_REMOVE_FORKJOIN_LOCK
+#define KMP_REMOVE_FORKJOIN_LOCK LIBOMP_REMOVE_FORKJOIN_LOCK
+
 // Configured cache line based on architecture
 #if KMP_ARCH_PPC64
 # define CACHE_LINE 128

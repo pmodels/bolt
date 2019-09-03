@@ -140,6 +140,8 @@ set(LIBOMP_HWLOC_INSTALL_DIR /usr/local CACHE PATH
 # Argobots-support
 set(LIBOMP_USE_ARGOBOTS FALSE CACHE BOOL
   "Use Argobots (http://www.argobots.org) as threading model?")
+set(LIBOMP_REMOVE_FORKJOIN_LOCK FALSE CACHE BOOL
+  "Remove FORK_JOIN_LOCK (experimental)")
 if(LIBOMP_USE_ARGOBOTS)
   set(KMP_USE_ABT 1)
   set(KMP_ABT_USE_SELF_INFO 1)

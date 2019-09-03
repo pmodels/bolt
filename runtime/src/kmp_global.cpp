@@ -423,6 +423,9 @@ kmp_int32 __kmp_yield_off_count =
    of declaration is not necessarily correlated to storage order. To fix this,
    all the important globals must be put in a big structure instead. */
 KMP_ALIGN_CACHE
+#if KMP_REMOVE_FORKJOIN_LOCK
+kmp_bootstrap_lock_t __kmp_threads_lock;
+#endif
 kmp_info_t **__kmp_threads = NULL;
 kmp_root_t **__kmp_root = NULL;
 
@@ -431,7 +434,17 @@ KMP_ALIGN_CACHE
 volatile int __kmp_nth = 0;
 volatile int __kmp_all_nth = 0;
 int __kmp_thread_pool_nth = 0;
+
+#if KMP_REMOVE_FORKJOIN_LOCK
+KMP_ALIGN_CACHE
+kmp_bootstrap_lock_t __kmp_thread_pool_lock;
+#endif
 volatile kmp_info_t *__kmp_thread_pool = NULL;
+
+#if KMP_REMOVE_FORKJOIN_LOCK
+KMP_ALIGN_CACHE
+kmp_bootstrap_lock_t __kmp_team_pool_lock;
+#endif
 volatile kmp_team_t *__kmp_team_pool = NULL;
 
 KMP_ALIGN_CACHE

@@ -102,6 +102,9 @@ static int __kmp_unregister_root_other_thread(int gtid);
 #endif
 static void __kmp_unregister_library(void); // called by __kmp_internal_end()
 static void __kmp_reap_thread(kmp_info_t *thread, int is_root);
+#if KMP_REMOVE_FORKJOIN_LOCK
+/* __kmp_thread_pool_insert_pt must be protected by __kmp_thread_pool_lock. */
+#endif
 kmp_info_t *__kmp_thread_pool_insert_pt = NULL;
 
 /* Calculate the identifier of the current thread */
@@ -849,7 +852,9 @@ static int __kmp_reserve_threads(kmp_root_t *root, kmp_team_t *parent_team,
                                  int enter_teams
 #endif /* OMP_40_ENABLED */
                                  ) {
+#if !KMP_REMOVE_FORKJOIN_LOCK
   int capacity;
+#endif
   int new_nthreads;
   KMP_DEBUG_ASSERT(__kmp_init_serial);
   KMP_DEBUG_ASSERT(root && parent_team);
@@ -970,6 +975,7 @@ static int __kmp_reserve_threads(kmp_root_t *root, kmp_team_t *parent_team,
     new_nthreads = tl_nthreads;
   }
 
+#if !KMP_REMOVE_FORKJOIN_LOCK
   // Check if the threads array is large enough, or needs expanding.
   // See comment in __kmp_register_root() about the adjustment if
   // __kmp_threads[0] == NULL.
@@ -1006,6 +1012,10 @@ static int __kmp_reserve_threads(kmp_root_t *root, kmp_team_t *parent_team,
       }
     }
   }
+#else // KMP_REMOVE_FORKJOIN_LOCK
+  // There is no fork/join lock, so we cannot calculate the exact number of
+  // threads needed for further parallel regions here. Let's ignore it.
+#endif // KMP_REMOVE_FORKJOIN_LOCK
 
 #ifdef KMP_DEBUG
   if (new_nthreads == 1) {
@@ -1775,7 +1785,9 @@ int __kmp_fork_call(ident_t *loc, int gtid,
       }
       if (nthreads > 1) {
         /* determine how many new threads we can use */
+#if !KMP_REMOVE_FORKJOIN_LOCK
         __kmp_acquire_bootstrap_lock(&__kmp_forkjoin_lock);
+#endif
         nthreads = __kmp_reserve_threads(
             root, parent_team, master_tid, nthreads
 #if OMP_40_ENABLED
@@ -1792,7 +1804,9 @@ int __kmp_fork_call(ident_t *loc, int gtid,
           // Free lock for single thread execution here; for multi-thread
           // execution it will be freed later after team of threads created
           // and initialized
+#if !KMP_REMOVE_FORKJOIN_LOCK
           __kmp_release_bootstrap_lock(&__kmp_forkjoin_lock);
+#endif
         }
       }
     }
@@ -2264,7 +2278,9 @@ int __kmp_fork_call(ident_t *loc, int gtid,
     master_th->th.ompt_thread_info.state = ompt_state_work_parallel;
 #endif
 
+#if !KMP_REMOVE_FORKJOIN_LOCK
     __kmp_release_bootstrap_lock(&__kmp_forkjoin_lock);
+#endif
 
 #if USE_ITT_BUILD
     if (team->t.t_active_level == 1 // only report frames at level 1
@@ -2559,10 +2575,12 @@ void __kmp_join_call(ident_t *loc, int gtid
 
   master_th->th.th_dispatch = &parent_team->t.t_dispatch[team->t.t_master_tid];
 
+#if !KMP_REMOVE_FORKJOIN_LOCK
   /* jc: The following lock has instructions with REL and ACQ semantics,
      separating the parallel user code called in this parallel region
      from the serial user code called after this function returns. */
   __kmp_acquire_bootstrap_lock(&__kmp_forkjoin_lock);
+#endif
 
 #if OMP_40_ENABLED
   if (!master_th->th.th_teams_microtask ||
@@ -2572,7 +2590,10 @@ void __kmp_join_call(ident_t *loc, int gtid
     /* Decrement our nested depth level */
     KMP_ATOMIC_DEC(&root->r.r_in_parallel);
   }
+
+#if !KMP_REMOVE_FORKJOIN_LOCK
   KMP_DEBUG_ASSERT(root->r.r_in_parallel >= 0);
+#endif
 
 #if OMPT_SUPPORT
   if (ompt_enabled.enabled) {
@@ -2656,7 +2677,9 @@ void __kmp_join_call(ident_t *loc, int gtid
   // KMP_ASSERT( master_th->th.th_current_task->td_flags.executing == 0 );
   master_th->th.th_current_task->td_flags.executing = 1;
 
+#if !KMP_REMOVE_FORKJOIN_LOCK
   __kmp_release_bootstrap_lock(&__kmp_forkjoin_lock);
+#endif
 
 #if OMPT_SUPPORT
   if (ompt_enabled.enabled) {
@@ -2724,6 +2747,7 @@ void __kmp_set_num_threads(int new_nth, int gtid) {
 
   set__nproc(thread, new_nth);
 
+#if !KMP_REMOVE_FORKJOIN_LOCK
   // If this omp_set_num_threads() call will cause the hot team size to be
   // reduced (in the absence of a num_threads clause), then reduce it now,
   // rather than waiting for the next parallel region.
@@ -2768,6 +2792,9 @@ void __kmp_set_num_threads(int new_nth, int gtid) {
     // Special flag in case omp_set_num_threads() call
     hot_team->t.t_size_changed = -1;
   }
+#else
+  // Since hot_team is not protected by __kmp_forkjoin_lock, we can't modify it.
+#endif
 }
 
 /* Changes max_active_levels */
@@ -3757,6 +3784,7 @@ int __kmp_register_root(int initial_thread) {
     --capacity;
   }
 
+#if !KMP_REMOVE_FORKJOIN_LOCK
   /* see if there are too many threads */
   if (__kmp_all_nth >= capacity && !__kmp_expand_threads(1)) {
     if (__kmp_tp_cached) {
@@ -3768,20 +3796,42 @@ int __kmp_register_root(int initial_thread) {
                   __kmp_msg_null);
     }
   }
+#else
+  // At least, the length should be more than 1.
+  __kmp_acquire_bootstrap_lock(&__kmp_threads_lock);
+  __kmp_expand_threads(1);
+  __kmp_release_bootstrap_lock(&__kmp_threads_lock);
+#endif
 
+#if KMP_REMOVE_FORKJOIN_LOCK
+  __kmp_acquire_bootstrap_lock(&__kmp_threads_lock);
+#endif
   /* find an available thread slot */
   /* Don't reassign the zero slot since we need that to only be used by initial
      thread */
   for (gtid = (initial_thread ? 0 : 1); TCR_PTR(__kmp_threads[gtid]) != NULL;
        gtid++)
+#if !KMP_REMOVE_FORKJOIN_LOCK
     ;
+#else
+    {
+      // If the capacity of __kmp_threads is not enough, expands it here.
+      if (gtid - 1 >= __kmp_threads_capacity)
+        __kmp_expand_threads(__kmp_threads_capacity * 2);
+    }
+#endif
   KA_TRACE(1,
            ("__kmp_register_root: found slot in threads array: T#%d\n", gtid));
   KMP_ASSERT(gtid < __kmp_threads_capacity);
 
   /* update global accounting */
+#if !KMP_REMOVE_FORKJOIN_LOCK
   __kmp_all_nth++;
   TCW_4(__kmp_nth, __kmp_nth + 1);
+#else
+  KMP_TEST_THEN_INC32(&__kmp_all_nth);
+  KMP_TEST_THEN_INC32(&__kmp_nth);
+#endif
 
   // if __kmp_adjust_gtid_mode is set, then we use method #1 (sp search) for low
   // numbers of procs, and method #2 (keyed API call) for higher numbers.
@@ -3869,6 +3919,10 @@ int __kmp_register_root(int initial_thread) {
 
   /* drop root_thread into place */
   TCW_SYNC_PTR(__kmp_threads[gtid], root_thread);
+
+#if KMP_REMOVE_FORKJOIN_LOCK
+  __kmp_release_bootstrap_lock(&__kmp_threads_lock);
+#endif
 
   root->r.r_root_team->t.t_threads[0] = root_thread;
   root->r.r_hot_team->t.t_threads[0] = root_thread;
@@ -4055,11 +4109,24 @@ static int __kmp_reset_root(int gtid, kmp_root_t *root) {
   }
 #endif
 
+#if !KMP_REMOVE_FORKJOIN_LOCK
   TCW_4(__kmp_nth,
         __kmp_nth - 1); // __kmp_reap_thread will decrement __kmp_all_nth.
   root->r.r_cg_nthreads--;
+#else
+  KMP_TEST_THEN_DEC32(&__kmp_nth);
+  KMP_TEST_THEN_DEC32(&root->r.r_cg_nthreads);
+#endif
 
+#if KMP_REMOVE_FORKJOIN_LOCK
+  /* __kmp_reap_thread requires __kmp_thread_pool_lock. */
+  __kmp_acquire_bootstrap_lock(&__kmp_thread_pool_lock);
+#endif
   __kmp_reap_thread(root->r.r_uber_thread, 1);
+#if KMP_REMOVE_FORKJOIN_LOCK
+  /* __kmp_reap_thread requires __kmp_thread_pool_lock. */
+  __kmp_release_bootstrap_lock(&__kmp_thread_pool_lock);
+#endif
 
   // We canot put root thread to __kmp_thread_pool, so we have to reap it istead
   // of freeing.
@@ -4315,6 +4382,10 @@ kmp_info_t *__kmp_allocate_thread(kmp_root_t *root, kmp_team_t *team,
 #endif
   KMP_MB();
 
+#if KMP_REMOVE_FORKJOIN_LOCK
+  __kmp_acquire_bootstrap_lock(&__kmp_thread_pool_lock);
+#endif
+
   /* first, try to get one from the thread pool */
   if (__kmp_thread_pool) {
 
@@ -4334,13 +4405,22 @@ kmp_info_t *__kmp_allocate_thread(kmp_root_t *root, kmp_team_t *team,
     KMP_DEBUG_ASSERT(__kmp_nth < __kmp_threads_capacity);
     KMP_DEBUG_ASSERT(__kmp_thread_pool_nth >= 0);
 
+#if KMP_REMOVE_FORKJOIN_LOCK
+    __kmp_release_bootstrap_lock(&__kmp_thread_pool_lock);
+#endif
+
     /* setup the thread structure */
     __kmp_initialize_info(new_thr, team, new_tid,
                           new_thr->th.th_info.ds.ds_gtid);
     KMP_DEBUG_ASSERT(new_thr->th.th_serial_team);
 
+#if !KMP_REMOVE_FORKJOIN_LOCK
     TCW_4(__kmp_nth, __kmp_nth + 1);
     root->r.r_cg_nthreads++;
+#else
+     KMP_TEST_THEN_INC32(&__kmp_nth);
+     KMP_TEST_THEN_INC32(&root->r.r_cg_nthreads);
+#endif
 
     new_thr->th.th_task_state = 0;
     new_thr->th.th_task_state_top = 0;
@@ -4372,8 +4452,17 @@ kmp_info_t *__kmp_allocate_thread(kmp_root_t *root, kmp_team_t *team,
     return new_thr;
   }
 
+#if KMP_REMOVE_FORKJOIN_LOCK
+  __kmp_release_bootstrap_lock(&__kmp_thread_pool_lock);
+#endif
+
   /* no, well fork a new one */
+#if KMP_REMOVE_FORKJOIN_LOCK
+  // __kmp_forkjoin_lock maintains the consistency of __kmp_nth and
+  // __kmp_all_nth; the following condition does not hold without this lock.
+#else
   KMP_ASSERT(__kmp_nth == __kmp_all_nth);
+#endif
   KMP_ASSERT(__kmp_all_nth < __kmp_threads_capacity);
 
 #if KMP_USE_MONITOR
@@ -4406,15 +4495,28 @@ kmp_info_t *__kmp_allocate_thread(kmp_root_t *root, kmp_team_t *team,
   }
 #endif
 
+#if KMP_REMOVE_FORKJOIN_LOCK
+  __kmp_acquire_bootstrap_lock(&__kmp_threads_lock);
+#endif
+
   KMP_MB();
   for (new_gtid = 1; TCR_PTR(__kmp_threads[new_gtid]) != NULL; ++new_gtid) {
     KMP_DEBUG_ASSERT(new_gtid < __kmp_threads_capacity);
+#if KMP_REMOVE_FORKJOIN_LOCK
+    // If the length of __kmp_threads is not enough, expands here.
+    if (new_gtid - 1 >= __kmp_threads_capacity)
+      __kmp_expand_threads(__kmp_threads_capacity * 2);
+#endif
   }
 
   /* allocate space for it. */
   new_thr = (kmp_info_t *)__kmp_allocate(sizeof(kmp_info_t));
 
   TCW_SYNC_PTR(__kmp_threads[new_gtid], new_thr);
+
+#if KMP_REMOVE_FORKJOIN_LOCK
+  __kmp_release_bootstrap_lock(&__kmp_threads_lock);
+#endif
 
   if (__kmp_storage_map) {
     __kmp_print_thread_storage_map(new_thr, new_gtid);
@@ -4494,11 +4596,18 @@ kmp_info_t *__kmp_allocate_thread(kmp_root_t *root, kmp_team_t *team,
   new_thr->th.th_active_in_pool = FALSE;
   TCW_4(new_thr->th.th_active, TRUE);
 
+#if !KMP_REMOVE_FORKJOIN_LOCK
   /* adjust the global counters */
   __kmp_all_nth++;
   __kmp_nth++;
 
   root->r.r_cg_nthreads++;
+#else
+  KMP_TEST_THEN_INC32(&__kmp_all_nth);
+  KMP_TEST_THEN_INC32(&__kmp_nth);
+
+  KMP_TEST_THEN_INC32(&root->r.r_cg_nthreads);
+#endif
 
 #if KMP_USE_ABT
 
@@ -5397,6 +5506,9 @@ __kmp_allocate_team(kmp_root_t *root, int new_nproc, int max_nproc,
   }
 
   /* next, let's try to take one from the team pool */
+#if KMP_REMOVE_FORKJOIN_LOCK
+  __kmp_acquire_bootstrap_lock(&__kmp_team_pool_lock);
+#endif
   KMP_MB();
   for (team = CCAST(kmp_team_t *, __kmp_team_pool); (team);) {
     /* TODO: consider resizing undersized teams instead of reaping them, now
@@ -5404,6 +5516,10 @@ __kmp_allocate_team(kmp_root_t *root, int new_nproc, int max_nproc,
     if (team->t.t_max_nproc >= max_nproc) {
       /* take this team from the team pool */
       __kmp_team_pool = team->t.t_next_pool;
+
+#if KMP_REMOVE_FORKJOIN_LOCK
+      __kmp_release_bootstrap_lock(&__kmp_team_pool_lock);
+#endif
 
       /* setup the team for fresh use */
       __kmp_initialize_team(team, new_nproc, new_icvs, NULL);
@@ -5457,6 +5573,9 @@ __kmp_allocate_team(kmp_root_t *root, int new_nproc, int max_nproc,
     team = __kmp_reap_team(team);
     __kmp_team_pool = team;
   }
+#if KMP_REMOVE_FORKJOIN_LOCK
+  __kmp_release_bootstrap_lock(&__kmp_team_pool_lock);
+#endif
 
   /* nothing available in the pool, no matter, make a new team! */
   KMP_MB();
@@ -5537,7 +5656,6 @@ void __kmp_free_team(kmp_root_t *root,
   int f;
   KA_TRACE(20, ("__kmp_free_team: T#%d freeing team %d\n", __kmp_get_gtid(),
                 team->t.t_id));
-
   /* verify state */
   KMP_DEBUG_ASSERT(root);
   KMP_DEBUG_ASSERT(team);
@@ -5646,10 +5764,16 @@ void __kmp_free_team(kmp_root_t *root,
       team->t.t_threads[f] = NULL;
     }
 
+#if KMP_REMOVE_FORKJOIN_LOCK
+    __kmp_acquire_bootstrap_lock(&__kmp_team_pool_lock);
+#endif
     /* put the team back in the team pool */
     /* TODO limit size of team pool, call reap_team if pool too large */
     team->t.t_next_pool = CCAST(kmp_team_t *, __kmp_team_pool);
     __kmp_team_pool = (volatile kmp_team_t *)team;
+#if KMP_REMOVE_FORKJOIN_LOCK
+    __kmp_release_bootstrap_lock(&__kmp_team_pool_lock);
+#endif
   }
 
   KMP_MB();
@@ -5743,6 +5867,10 @@ void __kmp_free_thread(kmp_info_t *this_th) {
   __kmp_free_implicit_task(this_th);
   this_th->th.th_current_task = NULL;
 
+#if KMP_REMOVE_FORKJOIN_LOCK
+  __kmp_acquire_bootstrap_lock(&__kmp_thread_pool_lock);
+#endif
+
   // If the __kmp_thread_pool_insert_pt is already past the new insert
   // point, then we need to re-scan the entire list.
   gtid = this_th->th.th_info.ds.ds_gtid;
@@ -5777,8 +5905,17 @@ void __kmp_free_thread(kmp_info_t *this_th) {
   TCW_4(this_th->th.th_in_pool, TRUE);
   __kmp_thread_pool_nth++;
 
+#if KMP_REMOVE_FORKJOIN_LOCK
+  __kmp_release_bootstrap_lock(&__kmp_thread_pool_lock);
+#endif
+
+#if !KMP_REMOVE_FORKJOIN_LOCK
   TCW_4(__kmp_nth, __kmp_nth - 1);
   root->r.r_cg_nthreads--;
+#else
+  KMP_TEST_THEN_DEC32(&__kmp_nth);
+  KMP_TEST_THEN_DEC32(&root->r.r_cg_nthreads);
+#endif
 
 #ifdef KMP_ADJUST_BLOCKTIME
   /* Adjust blocktime back to user setting or default if necessary */
@@ -5988,7 +6125,11 @@ void __kmp_internal_end_atexit(void) {
 }
 
 static void __kmp_reap_thread(kmp_info_t *thread, int is_root) {
+#if !KMP_REMOVE_FORKJOIN_LOCK
   // It is assumed __kmp_forkjoin_lock is acquired.
+#else
+  // It is assumed __kmp_thread_pool_lock is acquired.
+#endif
 
   int gtid;
 
@@ -6048,7 +6189,11 @@ static void __kmp_reap_thread(kmp_info_t *thread, int is_root) {
   KMP_DEBUG_ASSERT(__kmp_threads[gtid] == thread);
   TCW_SYNC_PTR(__kmp_threads[gtid], NULL);
 
+#if !KMP_REMOVE_FORKJOIN_LOCK
   --__kmp_all_nth;
+#else
+  KMP_TEST_THEN_DEC32(&__kmp_all_nth);
+#endif
 // __kmp_nth was decremented when thread is added to the pool.
 
 #ifdef KMP_ADJUST_BLOCKTIME
@@ -6166,6 +6311,9 @@ static void __kmp_internal_end(void) {
     KMP_MB();
 
     // Reap the worker threads.
+#if KMP_REMOVE_FORKJOIN_LOCK
+    __kmp_acquire_bootstrap_lock(&__kmp_thread_pool_lock);
+#endif
     // This is valid for now, but be careful if threads are reaped sooner.
     while (__kmp_thread_pool != NULL) { // Loop thru all the thread in the pool.
       // Get the next thread from the pool.
@@ -6178,8 +6326,14 @@ static void __kmp_internal_end(void) {
       __kmp_reap_thread(thread, 0);
     }
     __kmp_thread_pool_insert_pt = NULL;
+#if KMP_REMOVE_FORKJOIN_LOCK
+    __kmp_release_bootstrap_lock(&__kmp_thread_pool_lock);
+#endif
 
     // Reap teams.
+#if KMP_REMOVE_FORKJOIN_LOCK
+    __kmp_acquire_bootstrap_lock(&__kmp_team_pool_lock);
+#endif
     while (__kmp_team_pool != NULL) { // Loop thru all the teams in the pool.
       // Get the next team from the pool.
       kmp_team_t *team = CCAST(kmp_team_t *, __kmp_team_pool);
@@ -6188,6 +6342,9 @@ static void __kmp_internal_end(void) {
       team->t.t_next_pool = NULL;
       __kmp_reap_team(team);
     }
+#if KMP_REMOVE_FORKJOIN_LOCK
+    __kmp_release_bootstrap_lock(&__kmp_team_pool_lock);
+#endif
 
     __kmp_reap_task_teams();
 
@@ -6695,6 +6852,11 @@ static void __kmp_do_serial_initialize(void) {
   __kmp_init_atomic_lock(&__kmp_atomic_lock_20c);
   __kmp_init_atomic_lock(&__kmp_atomic_lock_32c);
   __kmp_init_bootstrap_lock(&__kmp_forkjoin_lock);
+#if KMP_REMOVE_FORKJOIN_LOCK
+  __kmp_init_bootstrap_lock(&__kmp_threads_lock);
+  __kmp_init_bootstrap_lock(&__kmp_team_pool_lock);
+  __kmp_init_bootstrap_lock(&__kmp_thread_pool_lock);
+#endif
   __kmp_init_bootstrap_lock(&__kmp_exit_lock);
 #if KMP_USE_MONITOR
   __kmp_init_bootstrap_lock(&__kmp_monitor_lock);
@@ -7530,6 +7692,7 @@ static int __kmp_active_hot_team_nproc(kmp_root_t *root) {
 // Perform an automatic adjustment to the number of
 // threads used by the next parallel region.
 static int __kmp_load_balance_nproc(kmp_root_t *root, int set_nproc) {
+#if !KMP_USE_ABT
   int retval;
   int pool_active;
   int hot_team_active;
@@ -7601,6 +7764,12 @@ static int __kmp_load_balance_nproc(kmp_root_t *root, int set_nproc) {
 
   KB_TRACE(20, ("__kmp_load_balance_nproc: exit. retval:%d\n", retval));
   return retval;
+#else
+  // In BOLT, most schedulers (=kernel threads) are busy-wait, so load balancing
+  // above does not work. Since threads are very lightweight, BOLT always
+  // creates as many as requested.
+  return set_nproc;
+#endif // !KMP_USE_ABT
 } // __kmp_load_balance_nproc()
 
 #endif /* USE_LOAD_BALANCE */
