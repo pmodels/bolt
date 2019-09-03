@@ -20,9 +20,7 @@
 /* #define BUILD_PARALLEL_ORDERED 1 */
 
 #if KMP_USE_ABT
-#include <abt.h>
-#define ABT_USE_PRIVATE_POOLS 1
-#define ABT_USE_SCHED_SLEEP 0
+#include "kmp_abt.h"
 #endif
 
 /* This fix replaces gettimeofday with clock_gettime for better scalability on
