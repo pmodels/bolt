@@ -3734,42 +3734,32 @@ static void __kmp_abt_sched_run(ABT_sched sched) {
   while (1) {
     ABT_unit unit;
     int run_cnt = 0;
-    size_t size;
 
     /* From the place pool */
     if (place_pool != ABT_POOL_NULL) {
-      ABT_pool_get_size(place_pool, &size);
-      if (size != 0) {
-        ABT_pool_pop(place_pool, &unit);
-        if (unit != ABT_UNIT_NULL) {
-          ABT_xstream_run_unit(unit, place_pool);
-          run_cnt++;
-        }
+      ABT_pool_pop(place_pool, &unit);
+      if (unit != ABT_UNIT_NULL) {
+        ABT_xstream_run_unit(unit, place_pool);
+        run_cnt++;
       }
     }
 
     /* From the shared pool */
-    ABT_pool_get_size(shared_pools[0], &size);
-    if (size != 0) {
-      ABT_pool_pop(shared_pools[0], &unit);
-      if (unit != ABT_UNIT_NULL) {
-        ABT_xstream_run_unit(unit, shared_pools[0]);
-        run_cnt++;
-      }
+    ABT_pool_pop(shared_pools[0], &unit);
+    if (unit != ABT_UNIT_NULL) {
+      ABT_xstream_run_unit(unit, shared_pools[0]);
+      run_cnt++;
     }
 
     /* Steal a work unit from other pools */
     if (run_cnt == 0 && num_shared_pools >= 2) {
       int target = __kmp_abt_fast_rand32(&seed) %
                    ((uint32_t)(num_shared_pools - 1)) + 1;
-      ABT_pool_get_size(shared_pools[target], &size);
-      if (size != 0) {
-        ABT_pool_pop(shared_pools[target], &unit);
-        if (unit != ABT_UNIT_NULL) {
-          ABT_unit_set_associated_pool(unit, shared_pools[0]);
-          ABT_xstream_run_unit(unit, shared_pools[0]);
-          run_cnt++;
-        }
+      ABT_pool_pop(shared_pools[target], &unit);
+      if (unit != ABT_UNIT_NULL) {
+        ABT_unit_set_associated_pool(unit, shared_pools[0]);
+        ABT_xstream_run_unit(unit, shared_pools[0]);
+        run_cnt++;
       }
     }
 
