@@ -610,7 +610,7 @@ static void __kmp_abt_launch_worker(void *thr) {
   int status, old_type, old_state;
   int gtid;
   kmp_info_t *this_thr = (kmp_info_t *)thr;
-  kmp_team_t *(*volatile pteam);
+  kmp_team_t *team = this_thr->th.th_team;
 
   gtid = this_thr->th.th_info.ds.ds_gtid;
   KMP_DEBUG_ASSERT(this_thr == __kmp_threads[gtid]);
@@ -621,32 +621,30 @@ static void __kmp_abt_launch_worker(void *thr) {
 
   KMP_MB();
 
-  pteam = (kmp_team_t *(*))(& this_thr->th.th_team);
   if (__kmp_tasking_mode != tskm_immediate_exec) {
     /* It is originally set up in task_team_sync() */
-    this_thr->th.th_task_team = (*pteam)->t.t_task_team
-                                [this_thr->th.th_task_state];
+    this_thr->th.th_task_team = team->t.t_task_team[this_thr->th.th_task_state];
   }
-  if (TCR_SYNC_PTR(*pteam) && !TCR_4(__kmp_global.g.g_done)) {
+  if (team && !TCR_4(__kmp_global.g.g_done)) {
     /* run our new task */
-    if (TCR_SYNC_PTR((*pteam)->t.t_pkfn) != NULL) {
+    if ((team->t.t_pkfn) != NULL) {
       int rc;
       KA_TRACE(20, ("__kmp_abt_launch_worker: T#%d(%d:%d) "
                     "invoke microtask = %p\n",
-                    gtid, (*pteam)->t.t_id, __kmp_tid_from_gtid(gtid),
-                    (*pteam)->t.t_pkfn));
+                    gtid, team->t.t_id, __kmp_tid_from_gtid(gtid),
+                    team->t.t_pkfn));
       KMP_STOP_DEVELOPER_EXPLICIT_TIMER(USER_launch_thread_loop);
       {
           KMP_TIME_DEVELOPER_BLOCK(USER_worker_invoke);
-          rc = (*pteam)->t.t_invoke(gtid);
+          rc = team->t.t_invoke(gtid);
       }
       KMP_START_DEVELOPER_EXPLICIT_TIMER(USER_launch_thread_loop);
       KMP_ASSERT(rc);
       KMP_MB();
       KA_TRACE(20, ("__kmp_abt_launch_worker: T#%d(%d:%d) "
                     "done microtask = %p\n",
-                    gtid, (*pteam)->t.t_id, __kmp_tid_from_gtid(gtid),
-                    (*pteam)->t.t_pkfn));
+                    gtid, team->t.t_id, __kmp_tid_from_gtid(gtid),
+                    team->t.t_pkfn));
     }
   }
 
