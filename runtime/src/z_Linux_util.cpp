@@ -471,6 +471,8 @@ void __kmp_terminate_thread(int gtid) {
   __kmp_yield(TRUE);
 } //
 
+#if !KMP_USE_ABT
+
 /* Set thread stack info according to values returned by pthread_getattr_np().
    If values are unreasonable, assume call failed and use incremental stack
    refinement method instead. Returns TRUE if the stack parameters could be
@@ -524,8 +526,6 @@ static kmp_int32 __kmp_set_stack_info(int gtid, kmp_info_t *th) {
   TCW_4(th->th.th_info.ds.ds_stackgrow, TRUE);
   return FALSE;
 }
-
-#if !KMP_USE_ABT
 
 static void *__kmp_launch_worker(void *thr) {
   int status, old_type, old_state;
