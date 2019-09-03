@@ -3303,17 +3303,8 @@ int __kmp_invoke_microtask(microtask_t pkfn, int gtid, int tid, int argc,
 static inline ABT_pool __kmp_abt_get_pool(int gtid) {
   KMP_DEBUG_ASSERT(gtid >= 0);
 
-#if ABT_USE_PRIVATE_POOLS
-  if (gtid < __kmp_abt_global.num_xstreams) {
-    return __kmp_abt_global.locals[gtid].priv_pool;
-  } else {
-    int eid = gtid % __kmp_abt_global.num_xstreams;
-    return __kmp_abt_global.locals[eid].shared_pool;
-  }
-#else
   int eid = gtid % __kmp_abt_global.num_xstreams;
   return __kmp_abt_global.locals[eid].shared_pool;
-#endif
 }
 
 static inline ABT_pool __kmp_abt_get_my_pool(int gtid) {
@@ -3425,12 +3416,6 @@ static void __kmp_abt_initialize(void) {
 
   /* Create pools */
   for (i = 0; i < num_xstreams; i++) {
-#if ABT_USE_PRIVATE_POOLS
-    status = ABT_pool_create_basic(ABT_POOL_FIFO, ABT_POOL_ACCESS_MPSC,
-                                   ABT_TRUE,
-                                   &__kmp_abt_global.locals[i].priv_pool);
-    KMP_CHECK_SYSFAIL("ABT_pool_create_basic", status);
-#endif
     status = ABT_pool_create_basic(ABT_POOL_FIFO, ABT_POOL_ACCESS_MPMC,
                                    ABT_TRUE,
                                    &__kmp_abt_global.locals[i].shared_pool);
@@ -3458,18 +3443,6 @@ static void __kmp_abt_initialize(void) {
   ABT_pool *my_pools;
   my_pools = (ABT_pool *)malloc((num_xstreams + 1) * sizeof(ABT_pool));
 
-#if ABT_USE_PRIVATE_POOLS
-  for (i = 0; i < num_xstreams; i++) {
-    my_pools[0] = __kmp_abt_global.locals[i].priv_pool;
-    for (k = 0; k < num_xstreams; k++) {
-      my_pools[k + 1] =
-          __kmp_abt_global.locals[(i + k) % num_xstreams].shared_pool;
-    }
-    status = ABT_sched_create(&sched_def, num_xstreams + 1, my_pools,
-                              config, &__kmp_abt_global.locals[i].sched);
-    KMP_CHECK_SYSFAIL("ABT_sched_create", status);
-  }
-#else /* ABT_USE_PRIVATE_POOLS */
   for (i = 0; i < num_xstreams; i++) {
     for (k = 0; k < num_xstreams; k++) {
       my_pools[k] =
@@ -3479,7 +3452,6 @@ static void __kmp_abt_initialize(void) {
                               config, &__kmp_abt_global.locals[i].sched);
     KMP_CHECK_SYSFAIL("ABT_sched_create", status);
   }
-#endif /* !ABT_USE_PRIVATE_POOLS */
 
   free(my_pools);
   ABT_sched_config_free(&config);
@@ -3551,9 +3523,6 @@ static void __kmp_abt_sched_run(ABT_sched sched) {
   int num_pools, num_shared_pools;
   ABT_pool *pools;
   ABT_pool *shared_pools;
-#if ABT_USE_PRIVATE_POOLS
-  ABT_pool priv_pool;
-#endif
   ABT_unit unit;
   unsigned seed = time(NULL);
 
@@ -3568,31 +3537,13 @@ static void __kmp_abt_sched_run(ABT_sched sched) {
   pools = (ABT_pool *)malloc(num_pools * sizeof(ABT_pool));
   ABT_sched_get_pools(sched, num_pools, 0, pools);
 
-#if ABT_USE_PRIVATE_POOLS
-  priv_pool = pools[0];
-  shared_pools = pools + 1;
-  num_shared_pools = num_pools - 1;
-#else
   shared_pools = pools;
   num_shared_pools = num_pools;
-#endif
 
   int sleep_cnt = 0;
   while (1) {
     int run_cnt = 0;
     size_t size;
-
-#if ABT_USE_PRIVATE_POOLS
-    /* Execute one work unit from the private pool */
-    ABT_pool_get_size(priv_pool, &size);
-    if (size != 0) {
-      ABT_pool_pop(priv_pool, &unit);
-      if (unit != ABT_UNIT_NULL) {
-        ABT_xstream_run_unit(unit, priv_pool);
-        run_cnt++;
-      }
-    }
-#endif
 
     /* From the shared pool */
     ABT_pool_get_size(shared_pools[0], &size);

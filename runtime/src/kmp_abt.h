@@ -18,7 +18,6 @@
 
 #include <abt.h>
 
-#define ABT_USE_PRIVATE_POOLS 1
 #define ABT_USE_SCHED_SLEEP 0
 
 #define KMP_ABT_FORK_NUM_WAYS_DEFAULT 4
@@ -33,7 +32,6 @@ typedef struct kmp_abt_local {
   ABT_sched sched;
 
   // Scheduler
-  ABT_pool priv_pool;
   ABT_pool shared_pool;
   /* ------------------------------------------------------------------------ */
 } __attribute__((aligned(CACHE_LINE))) kmp_abt_local_t;
