@@ -896,7 +896,8 @@ extern void __kmp_fini_memkind();
 #define KMP_MIN_NTH 1
 
 #ifndef KMP_MAX_NTH
-#if defined(PTHREAD_THREADS_MAX) && PTHREAD_THREADS_MAX < INT_MAX
+#if defined(PTHREAD_THREADS_MAX) && PTHREAD_THREADS_MAX < INT_MAX \
+    && !KMP_USE_ABT
 #define KMP_MAX_NTH PTHREAD_THREADS_MAX
 #else
 #define KMP_MAX_NTH INT_MAX
