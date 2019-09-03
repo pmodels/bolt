@@ -7621,7 +7621,10 @@ void __kmp_internal_join(ident_t *id, int gtid, kmp_team_t *team) {
       KA_TRACE(20, ("__kmp_internal_join: after __kmp_join_worker:"
                     " T#%d joined T#%d\n", gtid, __kmp_gtid_from_tid(f, team)));
     }
-    __kmp_abt_acquire_info_for_task(this_thr, taskdata, team);
+    // We don't need atomic operations to get thread info if it joined an
+    // outermost parallel region.
+    __kmp_abt_acquire_info_for_task(this_thr, taskdata, team,
+                                    team->t.t_level != 1);
   }
 #else // KMP_USE_ABT
   __kmp_join_barrier(gtid); /* wait for everyone */

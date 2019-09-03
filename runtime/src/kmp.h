@@ -3745,7 +3745,8 @@ extern kmp_info_t *__kmp_abt_get_self_info(void);
 extern void __kmp_abt_release_info(kmp_info_t *th);
 extern void __kmp_abt_acquire_info_for_task(kmp_info_t *th,
                                             kmp_taskdata_t *taskdata,
-                                            const kmp_team_t *match_team);
+                                            const kmp_team_t *match_team,
+                                            int atomic = 1);
 #endif
 
 /* ------------------------------------------------------------------------ */

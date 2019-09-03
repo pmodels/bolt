@@ -3251,26 +3251,31 @@ void __kmp_abt_release_info(kmp_info_t *th) {
 }
 
 void __kmp_abt_acquire_info_for_task(kmp_info_t *th, kmp_taskdata_t *taskdata,
-                                     const kmp_team_t *match_team) {
-  while (1) {
-    // task must be executed by an inactive thread belonging to the same team;
-    // if not, yield to a scheduler.
+                                     const kmp_team_t *match_team, int atomic) {
+  if (atomic) {
+    while (1) {
+      // task must be executed by an inactive thread belonging to the same team;
+      // if not, yield to a scheduler.
 
-    // Quick check.
-    if (th->th.th_team != match_team)
-      goto END_WHILE;
-    // Take a lock.
-    if (KMP_COMPARE_AND_STORE_RET32(&th->th.th_active, FALSE, TRUE) != FALSE)
-      goto END_WHILE;
-    // th->th.th_team might have been updated while taking a lock; if th_team
-    // is not matched, yield to a scheduler.
-    if (th->th.th_team != match_team) {
-      __kmp_abt_release_info(th);
-      goto END_WHILE;
+      // Quick check.
+      if (th->th.th_team != match_team)
+        goto END_WHILE;
+      // Take a lock.
+      if (KMP_COMPARE_AND_STORE_RET32(&th->th.th_active, FALSE, TRUE) != FALSE)
+        goto END_WHILE;
+      // th->th.th_team might have been updated while taking a lock; if th_team
+      // is not matched, yield to a scheduler.
+      if (th->th.th_team != match_team) {
+        __kmp_abt_release_info(th);
+        goto END_WHILE;
+      }
+      break;
+  END_WHILE:
+      ABT_thread_yield();
     }
-    break;
-END_WHILE:
-    ABT_thread_yield();
+  } else {
+    KMP_DEBUG_ASSERT(th->th.th_active == FALSE);
+    th->th.th_active = TRUE;
   }
   th->th.th_current_task = taskdata;
 }
