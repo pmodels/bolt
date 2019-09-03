@@ -7602,7 +7602,6 @@ void __kmp_internal_join(ident_t *id, int gtid, kmp_team_t *team) {
 
 #if KMP_USE_ABT
   {
-    int f;
     /* The master thread executes the remaining tasks*/
     __kmp_abt_wait_child_tasks(this_thr, FALSE);
 
@@ -7611,11 +7610,8 @@ void __kmp_internal_join(ident_t *id, int gtid, kmp_team_t *team) {
     __kmp_abt_release_info(this_thr);
 
     /* Join Argobots ULTs here */
-    for (f = 1; f < team->t.t_nproc; ++f) {
-      __kmp_abt_join_worker(team->t.t_threads[f]);
-      KA_TRACE(20, ("__kmp_internal_join: after __kmp_join_worker:"
-                    " T#%d joined T#%d\n", gtid, __kmp_gtid_from_tid(f, team)));
-    }
+    __kmp_abt_join_workers(team);
+    KA_TRACE(20, ("__kmp_internal_join: after __kmp_abt_join_workers"));
     // We don't need atomic operations to get thread info if it joined an
     // outermost parallel region.
     __kmp_abt_acquire_info_for_task(this_thr, taskdata, team,

@@ -1073,23 +1073,26 @@ void __kmp_abt_create_workers(kmp_team_t *team) {
   __kmp_abt_create_workers_impl(team, 0, num_threads);
 } // __kmp_abt_create_workers
 
-void __kmp_abt_join_worker(kmp_info_t *th) {
-  int status;
-
+static inline void __kmp_abt_join_workers_impl(kmp_team_t *team, int start_tid,
+                                               int end_tid) {
   KMP_MB(); /* Flush all pending memory write invalidates.  */
 
-  KA_TRACE(10, ("__kmp_abt_join_worker: try to join worker T#%d\n",
-                th->th.th_info.ds.ds_gtid) );
+  kmp_info_t **threads = team->t.t_threads;
 
-  ABT_thread ds_thread = th->th.th_info.ds.ds_thread;
-  status = ABT_thread_join(ds_thread);
-  KMP_ASSERT(status == ABT_SUCCESS);
-
-  KA_TRACE(10, ("__kmp_abt_join_worker: done joining worker T#%d\n",
-                th->th.th_info.ds.ds_gtid));
-
+  /* Join Argobots ULTs here */
+  for (int f = start_tid + 1; f < end_tid; f++) {
+    // t_threads[0] is not joined.
+    ABT_thread ds_thread = threads[f]->th.th_info.ds.ds_thread;
+    int status = ABT_thread_join(ds_thread);
+    KMP_DEBUG_ASSERT(status == ABT_SUCCESS);
+  }
   KMP_MB(); /* Flush all pending memory write invalidates.  */
-} // __kmp_abt_join_worker
+} // __kmp_abt_join_workers_impl
+
+void __kmp_abt_join_workers(kmp_team_t *team) {
+  const int num_threads = team->t.t_nproc;
+  __kmp_abt_join_workers_impl(team, 0, num_threads);
+} // __kmp_abt_join_workers
 
 #endif /* KMP_USE_ABT */
 
