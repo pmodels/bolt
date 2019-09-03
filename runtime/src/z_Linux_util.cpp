@@ -1092,6 +1092,13 @@ static inline void __kmp_abt_join_workers_impl(kmp_team_t *team, int start_tid,
 void __kmp_abt_join_workers(kmp_team_t *team) {
   const int num_threads = team->t.t_nproc;
   __kmp_abt_join_workers_impl(team, 0, num_threads);
+  for (int tid = 0; tid < num_threads; tid++) {
+    kmp_info_t *th = team->t.t_threads[tid];
+    // Reset th_current_task; th_current_task must be consistent when the team
+    // is reused in the future. BOLT cannot run tasks on top of implicit tasks,
+    // so such an inconsistency problem occurs.
+    th->th.th_current_task = &team->t.t_implicit_task_taskdata[tid];
+  }
 } // __kmp_abt_join_workers
 
 #endif /* KMP_USE_ABT */
