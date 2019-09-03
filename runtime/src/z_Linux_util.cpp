@@ -3368,7 +3368,7 @@ static inline ABT_pool __kmp_abt_get_pool_thread(int self_rank,
   if (level == 0) {
     // The initial thread must be bound to the first place unless proc_bind is
     // proc_bind_false
-    if (proc_bind == proc_bind_false) {
+    if (proc_bind == proc_bind_false || proc_bind == proc_bind_unset) {
       // Push to a shared pool.
       *p_place_id = -1;
       return __kmp_abt_global.locals[self_rank].shared_pool;
@@ -3379,6 +3379,10 @@ static inline ABT_pool __kmp_abt_get_pool_thread(int self_rank,
     }
   } else {
     switch (proc_bind) {
+      case proc_bind_unset:
+        // Push to a shared pool.
+        *p_place_id = -1;
+        return __kmp_abt_global.locals[self_rank].shared_pool;
       case proc_bind_close: {
         const int num_places = __kmp_abt_global.num_places;
         int push_place_id;

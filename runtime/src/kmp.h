@@ -793,7 +793,10 @@ typedef enum kmp_proc_bind_t {
   proc_bind_close,
   proc_bind_spread,
   proc_bind_intel, // use KMP_AFFINITY interface
-  proc_bind_default
+  proc_bind_default,
+#if KMP_USE_ABT
+  proc_bind_unset
+#endif
 } kmp_proc_bind_t;
 
 typedef struct kmp_nested_proc_bind_t {

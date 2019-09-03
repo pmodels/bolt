@@ -3164,6 +3164,13 @@ static void __kmp_stg_parse_proc_bind(char const *name, char const *value,
         buf = next;
         SKIP_WS(buf);
         bind = proc_bind_spread;
+#if KMP_USE_ABT
+      } else if ((num == (int)proc_bind_unset) ||
+                 __kmp_match_str("unset", buf, &next)) {
+        buf = next;
+        SKIP_WS(buf);
+        bind = proc_bind_unset;
+#endif
       } else {
         KMP_WARNING(StgInvalidValue, name, value);
         __kmp_nested_proc_bind.bind_types[0] = proc_bind_false;
@@ -3240,6 +3247,12 @@ static void __kmp_stg_print_proc_bind(kmp_str_buf_t *buffer, char const *name,
       case proc_bind_default:
         __kmp_str_buf_print(buffer, "default");
         break;
+
+#if KMP_USE_ABT
+      case proc_bind_unset:
+        __kmp_str_buf_print(buffer, "unset");
+        break;
+#endif
       }
       if (i < nelem - 1) {
         __kmp_str_buf_print(buffer, ",");
