@@ -3713,7 +3713,10 @@ static void __kmp_abt_sched_run(ABT_sched sched) {
   ABT_xstream_self_rank(&rank);
   ABT_pool *shared_pools;
   ABT_pool place_pool;
-  unsigned seed = time(NULL);
+  uint32_t seed;
+  do {
+    seed = (uint32_t)time(NULL) + 64 + rank;
+  } while (seed == 0);
 
 #if ABT_USE_SCHED_SLEEP
   struct timespec sleep_time;
@@ -3757,7 +3760,8 @@ static void __kmp_abt_sched_run(ABT_sched sched) {
 
     /* Steal a work unit from other pools */
     if (run_cnt == 0 && num_shared_pools >= 2) {
-      int target = rand_r(&seed) % (num_shared_pools - 1) + 1;
+      int target = __kmp_abt_fast_rand32(&seed) %
+                   ((uint32_t)(num_shared_pools - 1)) + 1;
       ABT_pool_get_size(shared_pools[target], &size);
       if (size != 0) {
         ABT_pool_pop(shared_pools[target], &unit);

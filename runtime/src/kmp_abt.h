@@ -23,6 +23,17 @@
 #define KMP_ABT_FORK_NUM_WAYS_DEFAULT 4
 #define KMP_ABT_FORK_CUTOFF_DEFAULT 2
 
+static inline uint32_t __kmp_abt_fast_rand32(uint32_t *p_seed) {
+  // George Marsaglia, "Xorshift RNGs", Journal of Statistical Software,
+  // Articles, 2003
+  uint32_t seed = *p_seed;
+  seed ^= seed << 13;
+  seed ^= seed >> 17;
+  seed ^= seed << 5;
+  *p_seed = seed;
+  return seed;
+}
+
 // ES-local data.
 typedef struct kmp_abt_local {
   /* ------------------------------------------------------------------------ */
