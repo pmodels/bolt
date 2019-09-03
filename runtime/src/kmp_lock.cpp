@@ -50,7 +50,7 @@ void __kmp_validate_locks(void) {
 // inlining (See comments by grepping "__kmp_base_user_lock_size".)
 #define KMP_DEFINE_LOCKS(locktype)                                             \
 typedef struct { char _[64]; } kmp_base_ ## locktype ## _lock_t;               \
-static int __kmp_is_ ## locktype ## _lock_initialized                          \
+static inline int __kmp_is_ ## locktype ## _lock_initialized                   \
              (kmp_ ## locktype ## _lock_t *lck) {                              \
   return lck == lck->initialized;                                              \
 }                                                                              \
@@ -93,23 +93,23 @@ void __kmp_destroy_ ## locktype ## _lock                                       \
        (kmp_ ## locktype ## _lock_t *lck) {                                    \
   lck->initialized = NULL;                                                     \
 }                                                                              \
-static int __kmp_acquire_ ## locktype ## _lock_with_checks                     \
+static inline int __kmp_acquire_ ## locktype ## _lock_with_checks              \
              (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {              \
   return __kmp_acquire_ ## locktype ## _lock(lck, gtid);                       \
 }                                                                              \
-static int __kmp_test_ ## locktype ## _lock_with_checks                        \
+static inline int __kmp_test_ ## locktype ## _lock_with_checks                 \
              (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {              \
   return __kmp_test_ ## locktype ## _lock(lck, gtid);                          \
 }                                                                              \
-static int __kmp_release_ ## locktype ## _lock_with_checks                     \
+static inline int __kmp_release_ ## locktype ## _lock_with_checks              \
              (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {              \
   return __kmp_release_ ## locktype ## _lock(lck, gtid);                       \
 }                                                                              \
-static void __kmp_init_ ## locktype ## _lock_with_checks                       \
+static inline void __kmp_init_ ## locktype ## _lock_with_checks                \
               (kmp_ ## locktype ## _lock_t *lck) {                             \
   __kmp_init_ ## locktype ## _lock(lck);                                       \
 }                                                                              \
-static void __kmp_destroy_ ## locktype ## _lock_with_checks                    \
+static inline void __kmp_destroy_ ## locktype ## _lock_with_checks             \
               (kmp_ ## locktype ## _lock_t *lck) {                             \
   __kmp_destroy_ ## locktype ## _lock(lck);                                    \
 }                                                                              \
@@ -175,43 +175,43 @@ void __kmp_destroy_nested_ ## locktype ## _lock                                \
   lck->nest_level = 0;                                                         \
   KMP_MB();                                                                    \
 }                                                                              \
-static int __kmp_acquire_nested_ ## locktype ## _lock_with_checks              \
+static inline int __kmp_acquire_nested_ ## locktype ## _lock_with_checks       \
              (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {              \
   return __kmp_acquire_nested_ ## locktype ## _lock(lck, gtid);                \
 }                                                                              \
-static int __kmp_test_nested_ ## locktype ## _lock_with_checks                 \
+static inline int __kmp_test_nested_ ## locktype ## _lock_with_checks          \
              (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {              \
   return __kmp_test_nested_ ## locktype ## _lock(lck, gtid);                   \
 }                                                                              \
-static int __kmp_release_nested_ ## locktype ## _lock_with_checks              \
+static inline int __kmp_release_nested_ ## locktype ## _lock_with_checks       \
              (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {              \
   return __kmp_release_nested_ ## locktype ## _lock(lck, gtid);                \
 }                                                                              \
-static void __kmp_init_nested_ ## locktype ## _lock_with_checks                \
+static inline void __kmp_init_nested_ ## locktype ## _lock_with_checks         \
               (kmp_ ## locktype ## _lock_t *lck) {                             \
   __kmp_init_nested_ ## locktype ## _lock(lck);                                \
 }                                                                              \
-static void __kmp_destroy_nested_ ## locktype ## _lock_with_checks             \
+static inline void __kmp_destroy_nested_ ## locktype ## _lock_with_checks      \
               (kmp_ ## locktype ## _lock_t *lck) {                             \
   __kmp_destroy_nested_ ## locktype ## _lock(lck);                             \
 }                                                                              \
-static const ident_t *__kmp_get_ ## locktype ## _lock_location                 \
+static inline const ident_t *__kmp_get_ ## locktype ## _lock_location          \
                         (kmp_ ## locktype ## _lock_t *lck) {                   \
   return lck->location;                                                        \
 }                                                                              \
-static void __kmp_set_ ## locktype ## _lock_location                           \
+static inline void __kmp_set_ ## locktype ## _lock_location                    \
               (kmp_ ## locktype ## _lock_t *lck, const ident_t *loc) {         \
   lck->location = loc;                                                         \
 }                                                                              \
-static kmp_lock_flags_t __kmp_get_ ## locktype ## _lock_flags                  \
+static inline kmp_lock_flags_t __kmp_get_ ## locktype ## _lock_flags           \
                           (kmp_ ## locktype ## _lock_t *lck) {                 \
   return lck->flags;                                                           \
 }                                                                              \
-static void __kmp_set_ ## locktype ## _lock_flags                              \
+static inline void __kmp_set_ ## locktype ## _lock_flags                       \
               (kmp_ ## locktype ## _lock_t *lck, kmp_lock_flags_t flags) {     \
   lck->flags = flags;                                                          \
 }                                                                              \
-static kmp_int32 __kmp_get_ ## locktype ## _lock_owner                         \
+static inline kmp_int32 __kmp_get_ ## locktype ## _lock_owner                  \
                    (kmp_ ## locktype ## _lock_t *lck) {                        \
   return 0;                                                                    \
 }
