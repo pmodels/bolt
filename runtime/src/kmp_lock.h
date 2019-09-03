@@ -93,14 +93,15 @@ extern void __kmp_validate_locks(void);
 struct KMP_ALIGN_CACHE kmp_abt_mutex_lock {
   // `initialized' must be the first entry in the lock data structure!
   volatile kmp_abt_mutex_lock *initialized;
-  ABT_mutex mutex;
+  kmp_int32 owner_gtid, nest_level;
+  char lock;
   ident_t const *location;
   kmp_lock_flags_t flags;
 };
 
-typedef struct kmp_abt_mutex_lock kmp_abt_mutex_lock_t;
+#define KMP_ABT_MUTEX_LOCK_INITIALIZER(lock) {NULL, 0, 0, 0, NULL, 0}
 
-#define KMP_ABT_MUTEX_LOCK_INITIALIZER(lock) {NULL, ABT_MUTEX_NULL, NULL, 0}
+typedef struct kmp_abt_mutex_lock kmp_abt_mutex_lock_t;
 
 struct KMP_ALIGN_CACHE kmp_abt_spin_lock {
   char lock;

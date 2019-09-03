@@ -46,31 +46,6 @@ void __kmp_validate_locks(void) {
   ;// Empty.
 }
 
-static inline ABT_mutex __kmp_abt_lock_get_mutex(ABT_mutex *p_mutex, int nest) {
-  ABT_mutex mutex = *p_mutex;
-  while (mutex == ABT_MUTEX_NULL) {
-    // Create mutex.
-    ABT_mutex new_mutex;
-    if (nest) {
-      ABT_mutex_attr mattr;
-      ABT_mutex_attr_create(&mattr);
-      ABT_mutex_attr_set_recursive(mattr, ABT_TRUE);
-      ABT_mutex_create_with_attr(mattr, &new_mutex);
-      ABT_mutex_attr_free(&mattr);
-    } else {
-      ABT_mutex_create(&new_mutex);
-    }
-    // Try to swap it/
-    int status = KMP_COMPARE_AND_STORE_PTR(p_mutex, ABT_MUTEX_NULL, new_mutex);
-    if (status == 0) {
-      // swap failed.
-      ABT_mutex_free(&new_mutex);
-    }
-    mutex = *p_mutex;
-  }
-  return mutex;
-}
-
 // kmp_base_xxx_lock_t must be larger than 64 bytes to avoid unintentional
 // inlining (See comments by grepping "__kmp_base_user_lock_size".)
 #define KMP_DEFINE_LOCKS(locktype)                                             \
@@ -81,29 +56,42 @@ static int __kmp_is_ ## locktype ## _lock_initialized                          \
 }                                                                              \
 int __kmp_acquire_ ## locktype ## _lock                                        \
       (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {                     \
-  return ABT_mutex_lock(__kmp_abt_lock_get_mutex(&lck->mutex, 0));             \
+  while (KMP_XCHG_FIXED8(&lck->lock, 1)) {                                     \
+    while (*((volatile char *)&lck->lock) == 1) {                              \
+      if (ABT_initialized() == ABT_SUCCESS)                                    \
+        ABT_thread_yield();                                                    \
+    }                                                                          \
+    KMP_MB();                                                                  \
+  }                                                                            \
+  return 0;                                                                    \
 }                                                                              \
 int __kmp_test_ ## locktype ## _lock                                           \
       (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {                     \
-  return ABT_mutex_trylock(__kmp_abt_lock_get_mutex(&lck->mutex, 0))           \
-         == ABT_SUCCESS;                                                       \
+  if (KMP_XCHG_FIXED8(&lck->lock, 1)) {                                        \
+    return FALSE;                                                              \
+  } else {                                                                     \
+    return TRUE;                                                               \
+  }                                                                            \
 }                                                                              \
 int __kmp_release_ ## locktype ## _lock                                        \
       (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {                     \
-  return ABT_mutex_unlock(lck->mutex);                                         \
+  KMP_MB();                                                                    \
+  lck->lock = 0;                                                               \
+  KMP_MB();                                                                    \
+  return 0;                                                                    \
 }                                                                              \
 void __kmp_init_ ## locktype ## _lock                                          \
        (kmp_ ## locktype ## _lock_t *lck) {                                    \
   lck->initialized = lck;                                                      \
-  lck->mutex = ABT_MUTEX_NULL;                                                 \
+  lck->owner_gtid = -2;                                                        \
+  lck->nest_level = 0;                                                         \
+  lck->lock = 0;                                                               \
   lck->location = NULL;                                                        \
   lck->flags = 0;                                                              \
 }                                                                              \
 void __kmp_destroy_ ## locktype ## _lock                                       \
        (kmp_ ## locktype ## _lock_t *lck) {                                    \
   lck->initialized = NULL;                                                     \
-  if (lck->mutex != ABT_MUTEX_NULL)                                            \
-    ABT_mutex_free(&lck->mutex);                                               \
 }                                                                              \
 static int __kmp_acquire_ ## locktype ## _lock_with_checks                     \
              (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {              \
@@ -127,29 +115,65 @@ static void __kmp_destroy_ ## locktype ## _lock_with_checks                    \
 }                                                                              \
 int __kmp_acquire_nested_ ## locktype ## _lock                                 \
       (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {                     \
-  return ABT_mutex_lock(__kmp_abt_lock_get_mutex(&lck->mutex, 1));             \
+  if (lck->owner_gtid == gtid) {                                               \
+    lck->nest_level++;                                                         \
+    return 0;                                                                  \
+  }                                                                            \
+  while (KMP_XCHG_FIXED8(&lck->lock, 1)) {                                     \
+    while (*((volatile char *)&lck->lock) == 1) {                              \
+      if (ABT_initialized() == ABT_SUCCESS)                                    \
+        ABT_thread_yield();                                                    \
+    }                                                                          \
+    KMP_MB();                                                                  \
+  }                                                                            \
+  KMP_DEBUG_ASSERT(lck->owner_gtid != -2);                                     \
+  KMP_DEBUG_ASSERT(lck->nest_level == 0);                                      \
+  lck->owner_gtid = gtid;                                                      \
+  return 0;                                                                    \
 }                                                                              \
 int __kmp_test_nested_ ## locktype ## _lock                                    \
       (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {                     \
-  return ABT_mutex_trylock(__kmp_abt_lock_get_mutex(&lck->mutex, 1))           \
-         == ABT_SUCCESS;                                                       \
+  if (lck->owner_gtid == gtid) {                                               \
+    lck->nest_level++;                                                         \
+    return 0;                                                                  \
+  }                                                                            \
+  if (KMP_XCHG_FIXED8(&lck->lock, 1)) {                                        \
+    return FALSE;                                                              \
+  } else {                                                                     \
+    KMP_DEBUG_ASSERT(lck->owner_gtid != -2);                                   \
+    KMP_DEBUG_ASSERT(lck->nest_level == 0);                                    \
+    lck->owner_gtid = gtid;                                                    \
+    return TRUE;                                                               \
+  }                                                                            \
 }                                                                              \
 int __kmp_release_nested_ ## locktype ## _lock                                 \
       (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {                     \
-  return ABT_mutex_unlock(lck->mutex);                                         \
+  if (lck->nest_level == 0) {                                                  \
+    lck->owner_gtid = -1;                                                      \
+    KMP_MB();                                                                  \
+    lck->lock = 0;                                                             \
+    KMP_MB();                                                                  \
+  } else {                                                                     \
+    lck->nest_level--;                                                         \
+  }                                                                            \
+  return 0;                                                                    \
 }                                                                              \
 void __kmp_init_nested_ ## locktype ## _lock                                   \
        (kmp_ ## locktype ## _lock_t *lck) {                                    \
   lck->initialized = lck;                                                      \
-  lck->mutex = ABT_MUTEX_NULL;                                                 \
+  lck->owner_gtid = -1;                                                        \
+  lck->nest_level = 0;                                                         \
+  lck->lock = 0;                                                               \
   lck->location = NULL;                                                        \
   lck->flags = 0;                                                              \
 }                                                                              \
 void __kmp_destroy_nested_ ## locktype ## _lock                                \
        (kmp_ ## locktype ## _lock_t *lck) {                                    \
-  lck->initialized = NULL;                                                     \
-  if (lck->mutex != ABT_MUTEX_NULL)                                            \
-    ABT_mutex_free(&lck->mutex);                                               \
+  KMP_MB();                                                                    \
+  lck->lock = 0;                                                               \
+  lck->owner_gtid = -1;                                                        \
+  lck->nest_level = 0;                                                         \
+  KMP_MB();                                                                    \
 }                                                                              \
 static int __kmp_acquire_nested_ ## locktype ## _lock_with_checks              \
              (kmp_ ## locktype ## _lock_t *lck, kmp_int32 gtid) {              \
