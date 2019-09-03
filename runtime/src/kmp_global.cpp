@@ -416,6 +416,11 @@ kmp_int32 __kmp_yield_on_count =
 kmp_int32 __kmp_yield_off_count =
     1; /* By default, yielding is off for 1 monitor periods. */
 
+#if KMP_USE_ABT
+KMP_ALIGN_CACHE
+kmp_abt_global_t __kmp_abt_global;
+#endif
+
 /* ------------------------------------------------------ */
 /* STATE mostly syncronized with global lock */
 /* data written to rarely by masters, read often by workers */

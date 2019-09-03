@@ -3207,40 +3207,29 @@ int __kmp_invoke_microtask(microtask_t pkfn, int gtid, int tid, int argc,
 
 #if KMP_USE_ABT
 
-typedef struct kmp_abt {
-  ABT_xstream *xstream;
-  ABT_sched *sched;
-  ABT_pool *priv_pool;
-  ABT_pool *shared_pool;
-  int num_xstreams;
-} kmp_abt_t;
-
-static kmp_abt_t *__kmp_abt = NULL;
-
 static inline ABT_pool __kmp_abt_get_pool(int gtid) {
-  KMP_DEBUG_ASSERT(__kmp_abt != NULL);
   KMP_DEBUG_ASSERT(gtid >= 0);
 
 #if ABT_USE_PRIVATE_POOLS
-  if (gtid < __kmp_abt->num_xstreams) {
-    return __kmp_abt->priv_pool[gtid];
+  if (gtid < __kmp_abt_global.num_xstreams) {
+    return __kmp_abt_global.locals[gtid].priv_pool;
   } else {
-    int eid = gtid % __kmp_abt->num_xstreams;
-    return __kmp_abt->shared_pool[eid];
+    int eid = gtid % __kmp_abt_global.num_xstreams;
+    return __kmp_abt_global.locals[eid].shared_pool;
   }
 #else
-  int eid = gtid % __kmp_abt->num_xstreams;
-  return __kmp_abt->shared_pool[eid];
+  int eid = gtid % __kmp_abt_global.num_xstreams;
+  return __kmp_abt_global.locals[eid].shared_pool;
 #endif
 }
 
 static inline ABT_pool __kmp_abt_get_my_pool(int gtid) {
-  if (gtid < __kmp_abt->num_xstreams) {
-    return __kmp_abt->shared_pool[gtid];
+  if (gtid < __kmp_abt_global.num_xstreams) {
+    return __kmp_abt_global.locals[gtid].shared_pool;
   } else {
     int eid;
     ABT_xstream_self_rank(&eid);
-    return __kmp_abt->shared_pool[eid];
+    return __kmp_abt_global.locals[eid].shared_pool;
   }
 }
 
@@ -3321,7 +3310,7 @@ kmp_info_t *__kmp_abt_get_self_info(void) {
 static void __kmp_abt_initialize(void) {
   int status;
   char *env;
-  int num_xstreams, num_pools;
+  int num_xstreams;
   int i, k;
 
   env = getenv("KMP_ABT_NUM_ESS");
@@ -3333,29 +3322,23 @@ static void __kmp_abt_initialize(void) {
     num_xstreams = __kmp_xproc;
   }
 
-  num_pools = num_xstreams;
   KA_TRACE(10, ("__kmp_abt_initialize: # of ESs = %d\n", num_xstreams));
 
-  __kmp_abt = (kmp_abt_t *)__kmp_allocate(sizeof(kmp_abt_t));
-  __kmp_abt->xstream = (ABT_xstream *)__kmp_allocate(num_xstreams
-                                                     * sizeof(ABT_xstream));
-  __kmp_abt->sched = (ABT_sched *)__kmp_allocate(num_xstreams
-                                                 * sizeof(ABT_sched));
-  __kmp_abt->priv_pool = (ABT_pool *)__kmp_allocate(num_pools
-                                                    * sizeof(ABT_pool));
-  __kmp_abt->shared_pool = (ABT_pool *)__kmp_allocate(num_pools
-                                                      * sizeof(ABT_pool));
-  __kmp_abt->num_xstreams = num_xstreams;
+  __kmp_abt_global.locals = (kmp_abt_local *)__kmp_allocate
+      (sizeof(kmp_abt_local) * num_xstreams);
+  __kmp_abt_global.num_xstreams = num_xstreams;
 
   /* Create pools */
   for (i = 0; i < num_xstreams; i++) {
 #if ABT_USE_PRIVATE_POOLS
     status = ABT_pool_create_basic(ABT_POOL_FIFO, ABT_POOL_ACCESS_MPSC,
-                                   ABT_TRUE, &__kmp_abt->priv_pool[i]);
+                                   ABT_TRUE,
+                                   &__kmp_abt_global.locals[i].priv_pool);
     KMP_CHECK_SYSFAIL("ABT_pool_create_basic", status);
 #endif
     status = ABT_pool_create_basic(ABT_POOL_FIFO, ABT_POOL_ACCESS_MPMC,
-                                   ABT_TRUE, &__kmp_abt->shared_pool[i]);
+                                   ABT_TRUE,
+                                   &__kmp_abt_global.locals[i].shared_pool);
     KMP_CHECK_SYSFAIL("ABT_pool_create_basic", status);
   }
 
@@ -3382,21 +3365,23 @@ static void __kmp_abt_initialize(void) {
 
 #if ABT_USE_PRIVATE_POOLS
   for (i = 0; i < num_xstreams; i++) {
-    my_pools[0] = __kmp_abt->priv_pool[i];
+    my_pools[0] = __kmp_abt_global.locals[i].priv_pool;
     for (k = 0; k < num_xstreams; k++) {
-      my_pools[k + 1] = __kmp_abt->shared_pool[(i + k) % num_xstreams];
+      my_pools[k + 1] =
+          __kmp_abt_global.locals[(i + k) % num_xstreams].shared_pool;
     }
     status = ABT_sched_create(&sched_def, num_xstreams + 1, my_pools,
-                              config, &__kmp_abt->sched[i]);
+                              config, &__kmp_abt_global.locals[i].sched);
     KMP_CHECK_SYSFAIL("ABT_sched_create", status);
   }
 #else /* ABT_USE_PRIVATE_POOLS */
   for (i = 0; i < num_xstreams; i++) {
     for (k = 0; k < num_xstreams; k++) {
-      my_pools[k] = __kmp_abt->shared_pool[(i + k) % num_xstreams];
+      my_pools[k] =
+          __kmp_abt_global.locals[(i + k) % num_xstreams].shared_pool;
     }
     status = ABT_sched_create(&sched_def, num_xstreams, my_pools,
-                              config, &__kmp_abt->sched[i]);
+                              config, &__kmp_abt_global.locals[i].sched);
     KMP_CHECK_SYSFAIL("ABT_sched_create", status);
   }
 #endif /* !ABT_USE_PRIVATE_POOLS */
@@ -3405,13 +3390,14 @@ static void __kmp_abt_initialize(void) {
   ABT_sched_config_free(&config);
 
   /* Create ESs */
-  status = ABT_xstream_self(&__kmp_abt->xstream[0]);
+  status = ABT_xstream_self(&__kmp_abt_global.locals[0].xstream);
   KMP_CHECK_SYSFAIL("ABT_xstream_self", status);
-  status = ABT_xstream_set_main_sched(__kmp_abt->xstream[0],
-                                      __kmp_abt->sched[0]);
+  status = ABT_xstream_set_main_sched(__kmp_abt_global.locals[0].xstream,
+                                      __kmp_abt_global.locals[0].sched);
   KMP_CHECK_SYSFAIL("ABT_xstream_set_main_sched", status);
   for (i = 1; i < num_xstreams; i++) {
-    status = ABT_xstream_create(__kmp_abt->sched[i], &__kmp_abt->xstream[i]);
+    status = ABT_xstream_create(__kmp_abt_global.locals[i].sched,
+                                &__kmp_abt_global.locals[i].xstream);
     KMP_CHECK_SYSFAIL("ABT_xstream_create", status);
   }
 }
@@ -3420,25 +3406,22 @@ static void __kmp_abt_finalize(void) {
   int status;
   int i;
 
-  for (i = 1; i < __kmp_abt->num_xstreams; i++) {
-    status = ABT_xstream_join(__kmp_abt->xstream[i]);
+  for (i = 1; i < __kmp_abt_global.num_xstreams; i++) {
+    status = ABT_xstream_join(__kmp_abt_global.locals[i].xstream);
     KMP_CHECK_SYSFAIL("ABT_xstream_join", status);
-    status = ABT_xstream_free(&__kmp_abt->xstream[i]);
+    status = ABT_xstream_free(&__kmp_abt_global.locals[i].xstream);
     KMP_CHECK_SYSFAIL("ABT_xstream_free", status);
   }
 
   /* Free schedulers */
-  for (i = 1; i < __kmp_abt->num_xstreams; i++) {
-    status = ABT_sched_free(&__kmp_abt->sched[i]);
+  for (i = 1; i < __kmp_abt_global.num_xstreams; i++) {
+    status = ABT_sched_free(&__kmp_abt_global.locals[i].sched);
     KMP_CHECK_SYSFAIL("ABT_sched_free", status);
   }
 
-  __kmp_free(__kmp_abt->xstream);
-  __kmp_free(__kmp_abt->sched);
-  __kmp_free(__kmp_abt->priv_pool);
-  __kmp_free(__kmp_abt->shared_pool);
-  __kmp_free(__kmp_abt);
-  __kmp_abt = NULL;
+  __kmp_free(__kmp_abt_global.locals);
+  __kmp_abt_global.num_xstreams = 0;
+  __kmp_abt_global.locals = NULL;
 }
 
 volatile int __kmp_abt_init_global = FALSE;
