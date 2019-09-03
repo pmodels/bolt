@@ -3334,6 +3334,9 @@ static void __kmp_initialize_root(kmp_root_t *root) {
                           0 // argc
                           USE_NESTED_HOT_ARG(NULL) // master thread is unknown
                           );
+#if KMP_USE_ABT
+  root_team->t.t_proc_bind_applied = proc_bind_default;
+#endif
 #if USE_DEBUGGER
   // Non-NULL value should be assigned to make the debugger display the root
   // team.
@@ -4614,6 +4617,8 @@ kmp_info_t *__kmp_allocate_thread(kmp_root_t *root, kmp_team_t *team,
   // We don't fork the new work thread (will do it later) but set gtid.
   new_thr->th.th_info.ds.ds_thread = ABT_THREAD_NULL;
   new_thr->th.th_info.ds.ds_gtid = new_gtid;
+
+  new_thr->th.th_current_place_id = -1;
   new_thr->th.th_creation_group_end_tid = -1;
 
 #else // KMP_USE_ABT

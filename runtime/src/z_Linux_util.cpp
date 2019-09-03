@@ -105,9 +105,12 @@ static void __kmp_print_cond(char *buffer, kmp_cond_align_t *cond) {
 #endif
 
 #if KMP_USE_ABT
-
-static ABT_pool __kmp_abt_get_pool(int gtid);
-static ABT_pool __kmp_abt_get_my_pool(int gtid);
+static inline ABT_pool __kmp_abt_get_pool_thread(int self_rank,
+                                                 int master_place_id, int tid,
+                                                 int num_threads, int level,
+                                                 kmp_proc_bind_t proc_bind,
+                                                 int *p_place_id);
+static inline ABT_pool __kmp_abt_get_pool_task();
 static int __kmp_abt_sched_init(ABT_sched sched, ABT_sched_config config);
 static void __kmp_abt_sched_run(ABT_sched sched);
 static int __kmp_abt_sched_free(ABT_sched sched);
@@ -1009,6 +1012,7 @@ void __kmp_create_worker(int gtid, kmp_info_t *th, size_t stack_size) {
 #else // KMP_USE_ABT
 
 static inline void __kmp_abt_create_workers_impl(kmp_team_t *team,
+                                                 const int self_rank,
                                                  int start_tid, int end_tid) {
   // tid must be start_tid.
 
@@ -1016,10 +1020,17 @@ static inline void __kmp_abt_create_workers_impl(kmp_team_t *team,
   ABT_thread_attr thread_attr = ABT_THREAD_ATTR_NULL;
 #endif
 
+  const kmp_proc_bind_t proc_bind = team->t.t_proc_bind_applied;
+  const int master_place_id = team->t.t_master_place_id;
+  const int team_level = team->t.t_level;
+  const int num_threads = team->t.t_nproc;
+
   const int num_ways = __kmp_abt_global.fork_num_ways;
   const int cutoff = __kmp_abt_global.fork_cutoff;
   const int inc = ((end_tid - start_tid) < cutoff) ? 1
                   : ((end_tid - start_tid + num_ways - 1) / num_ways);
+  KMP_DEBUG_ASSERT(self_rank != -1);
+  KMP_DEBUG_ASSERT(master_place_id != -1);
   KMP_DEBUG_ASSERT(inc > 0);
 
   // create / revive workers.
@@ -1064,13 +1075,11 @@ static inline void __kmp_abt_create_workers_impl(kmp_team_t *team,
 #endif // KMP_STATS_ENABLED
 
     ABT_pool target;
-    // If this new thread is for nested parallel region, the new thread is
-    // added to the shared pool of ES where the caller thread is running on.
-    if (th->th.th_team->t.t_level > 1) {
-      target = __kmp_abt_get_my_pool(gtid);
-    } else {
-      target = __kmp_abt_get_pool(gtid);
-    }
+    int place_id = 0;
+    target = __kmp_abt_get_pool_thread(self_rank, master_place_id, f,
+                                       num_threads, team_level, proc_bind,
+                                       &place_id);
+    th->th.th_current_place_id = place_id;
     th->th.th_creation_group_end_tid = new_creation_group_end_tid;
 
     if (th->th.th_info.ds.ds_thread == ABT_THREAD_NULL) {
@@ -1108,24 +1117,70 @@ static inline void __kmp_abt_create_workers_impl(kmp_team_t *team,
     int rec_end_tid = start_tid + inc;
     if (rec_end_tid > end_tid)
       rec_end_tid = end_tid;
-    __kmp_abt_create_workers_impl(team, rec_start_tid, rec_end_tid);
+    __kmp_abt_create_workers_impl(team, self_rank, rec_start_tid, rec_end_tid);
   }
 }
 
 static void __kmp_abt_create_workers_recursive(kmp_team_t *team, int start_tid,
                                                int end_tid) {
-  __kmp_abt_create_workers_impl(team, start_tid, end_tid);
+  int self_rank;
+  ABT_xstream_self_rank(&self_rank);
+  __kmp_abt_create_workers_impl(team, self_rank, start_tid, end_tid);
 }
 
 void __kmp_abt_create_workers(kmp_team_t *team) {
+  const int team_level = team->t.t_level;
   const int num_threads = team->t.t_nproc;
 #if KMP_BARRIER_ICV_PUSH
   // set up the master icvs.
   copy_icvs(&team->t.t_master_icvs,
             &team->t.t_implicit_task_taskdata[0].td_icvs);
 #endif
+
+  // Get self_rank
+  int self_rank;
+  ABT_xstream_self_rank(&self_rank);
+
+  // Set up proc bind.
+  kmp_proc_bind_t proc_bind = proc_bind_false;
+#if OMP_40_ENABLED
+  // Set up the affinity of the master thread.
+  kmp_proc_bind_t team_proc_bind = team->t.t_proc_bind;
+  if (team_proc_bind == proc_bind_default) {
+    // Use global setting.
+    int size = __kmp_nested_proc_bind.size;
+    if (size > (team_level - 1))
+      proc_bind = __kmp_nested_proc_bind.bind_types[team_level - 1];
+  } else if (team_proc_bind != proc_bind_intel) {
+    proc_bind = team_proc_bind;
+  }
+#endif
+  team->t.t_proc_bind_applied = proc_bind;
+
+  // Obtain master place id.
+  int master_tid = team->t.t_master_tid;
+  int master_place_id;
+  if (team_level <= 1) {
+    master_place_id = 0; // master place is set to 0.
+  } else {
+    kmp_team_t *parent_team = team->t.t_parent;
+    master_place_id
+        = parent_team->t.t_threads[master_tid]->th.th_current_place_id;
+    if (master_place_id == -1) {
+      // master thread is not bound to any place.
+      // Use the current place.
+      master_place_id = __kmp_abt_global.locals[self_rank].place_id;
+    }
+  }
+  team->t.t_master_place_id = master_place_id;
+
+  int place_id;
+  __kmp_abt_get_pool_thread(self_rank, master_place_id, master_tid, num_threads,
+                            team_level, proc_bind, &place_id);
+  team->t.t_threads[0]->th.th_current_place_id = place_id;
+
   // core.
-  __kmp_abt_create_workers_impl(team, 0, num_threads);
+  __kmp_abt_create_workers_impl(team, self_rank, 0, num_threads);
 } // __kmp_abt_create_workers
 
 static inline void __kmp_abt_join_workers_impl(kmp_team_t *team, int start_tid,
@@ -3300,21 +3355,75 @@ int __kmp_invoke_microtask(microtask_t pkfn, int gtid, int tid, int argc,
 
 #if KMP_USE_ABT
 
-static inline ABT_pool __kmp_abt_get_pool(int gtid) {
-  KMP_DEBUG_ASSERT(gtid >= 0);
-
-  int eid = gtid % __kmp_abt_global.num_xstreams;
-  return __kmp_abt_global.locals[eid].shared_pool;
+// self_rank and master_place_id must be specified.
+static inline ABT_pool __kmp_abt_get_pool_thread(int self_rank,
+                                                 int master_place_id, int tid,
+                                                 int num_threads, int level,
+                                                 kmp_proc_bind_t proc_bind,
+                                                 int *p_place_id) {
+  KMP_DEBUG_ASSERT(self_rank >= 0);
+  KMP_DEBUG_ASSERT(master_place_id >= 0);
+  KMP_DEBUG_ASSERT(level >= 0);
+  KMP_DEBUG_ASSERT(tid >= 0);
+  if (level == 0) {
+    // The initial thread must be bound to the first place unless proc_bind is
+    // proc_bind_false
+    if (proc_bind == proc_bind_false) {
+      // Push to a shared pool.
+      *p_place_id = -1;
+      return __kmp_abt_global.locals[self_rank].shared_pool;
+    } else {
+      // Push to the first place pool.
+      *p_place_id = 0;
+      return __kmp_abt_global.place_pools[0];
+    }
+  } else {
+    switch (proc_bind) {
+      case proc_bind_close: {
+        const int num_places = __kmp_abt_global.num_places;
+        int push_place_id;
+        KMP_DEBUG_ASSERT(master_place_id != -1);
+        if (num_threads <= num_places) {
+          push_place_id = master_place_id + tid;
+        } else {
+          push_place_id = master_place_id + (tid * num_places) / num_threads;
+        }
+        push_place_id = (push_place_id >= num_places)
+                        ? (push_place_id - num_places) : push_place_id;
+        *p_place_id = push_place_id;
+        return __kmp_abt_global.place_pools[push_place_id];
+      }
+      case proc_bind_master: {
+        // Use master pool.
+        int place_id = __kmp_abt_global.locals[self_rank].place_id;
+        ABT_pool place_pool = __kmp_abt_global.locals[self_rank].place_pool;
+        *p_place_id = place_id;
+        return place_pool;
+      }
+      case proc_bind_spread:
+      case proc_bind_true: {
+        // Push to a place pool.
+        const int num_places = __kmp_abt_global.num_places;
+        int push_place_id = master_place_id + (tid * num_places) / num_threads;
+        push_place_id = (push_place_id >= num_places)
+                        ? (push_place_id - num_places) : push_place_id;
+        *p_place_id = push_place_id;
+        return __kmp_abt_global.place_pools[push_place_id];
+      }
+      case proc_bind_false:
+      default: {
+        // Push to a shared pool.
+        *p_place_id = -1;
+        return __kmp_abt_global.locals[self_rank].shared_pool;
+      }
+    }
+  }
 }
 
-static inline ABT_pool __kmp_abt_get_my_pool(int gtid) {
-  if (gtid < __kmp_abt_global.num_xstreams) {
-    return __kmp_abt_global.locals[gtid].shared_pool;
-  } else {
-    int eid;
-    ABT_xstream_self_rank(&eid);
-    return __kmp_abt_global.locals[eid].shared_pool;
-  }
+static inline ABT_pool __kmp_abt_get_pool_task() {
+  int self_rank;
+  ABT_xstream_self_rank(&self_rank);
+  return __kmp_abt_global.locals[self_rank].shared_pool;
 }
 
 void __kmp_abt_release_info(kmp_info_t *th) {
@@ -3788,7 +3897,7 @@ static void __kmp_abt_execute_task(void *arg) {
 int __kmp_abt_create_task(kmp_info_t *th, kmp_task_t *task) {
   int status;
   int gtid = __kmp_gtid_from_thread(th);
-  ABT_pool dest = __kmp_abt_get_my_pool(gtid);
+  ABT_pool dest = __kmp_abt_get_pool_task();
 
   KA_TRACE(20, ("__kmp_abt_create_task: T#%d before creating task %p into the "
                 "pool %p.\n", gtid, task, dest));

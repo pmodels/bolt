@@ -2535,12 +2535,16 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
       th_set_proc_bind; /* if != proc_bind_default, use request for next fork */
   kmp_teams_size_t
       th_teams_size; /* number of teams/threads in teams construct */
+#if KMP_USE_ABT
+  int th_current_place_id; /* place id currently bound to */
+#else // !KMP_USE_ABT
 #if KMP_AFFINITY_SUPPORTED
   int th_current_place; /* place currently bound to */
   int th_new_place; /* place to bind to in par reg */
   int th_first_place; /* first place in partition */
   int th_last_place; /* last place in partition */
 #endif
+#endif // !KMP_USE_ABT
 #endif
 #if OMP_50_ENABLED
   int th_prev_level; /* previous level for affinity format */
@@ -2760,6 +2764,9 @@ typedef struct KMP_ALIGN_CACHE kmp_base_team {
 #if KMP_USE_ABT && KMP_BARRIER_ICV_PUSH
   KMP_ALIGN_CACHE
   kmp_internal_control_t t_master_icvs; // master's icvs
+  // both are updated in __kmp_abt_xxx_workers
+  int t_master_place_id; // Inform child threads of the affinity information.
+  kmp_proc_bind_t t_proc_bind_applied;
 #endif
 
 // Read/write by workers as well
