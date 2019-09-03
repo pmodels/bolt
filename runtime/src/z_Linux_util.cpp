@@ -3708,14 +3708,11 @@ static int __kmp_abt_sched_init(ABT_sched sched, ABT_sched_config config) {
 static void __kmp_abt_sched_run(ABT_sched sched) {
   uint32_t work_count = 0;
   __kmp_abt_sched_data_t *p_data;
-  int num_pools, num_shared_pools;
-  int num_xstreams = __kmp_abt_global.num_xstreams;
+  int num_pools, num_shared_pools = __kmp_abt_global.num_xstreams;
   int rank;
   ABT_xstream_self_rank(&rank);
-  ABT_pool *pools;
   ABT_pool *shared_pools;
   ABT_pool place_pool;
-  ABT_unit unit;
   unsigned seed = time(NULL);
 
 #if ABT_USE_SCHED_SLEEP
@@ -3726,15 +3723,13 @@ static void __kmp_abt_sched_run(ABT_sched sched) {
 
   ABT_sched_get_data(sched, (void **)&p_data);
   ABT_sched_get_num_pools(sched, &num_pools);
-  pools = (ABT_pool *)malloc(num_pools * sizeof(ABT_pool));
-  ABT_sched_get_pools(sched, num_pools, 0, pools);
-
-  shared_pools = pools;
-  num_shared_pools = __kmp_abt_global.num_xstreams;
+  shared_pools = (ABT_pool *)alloca(num_pools * sizeof(ABT_pool));
+  ABT_sched_get_pools(sched, num_pools, 0, shared_pools);
   place_pool = __kmp_abt_global.locals[rank].place_pool;
 
   int sleep_cnt = 0;
   while (1) {
+    ABT_unit unit;
     int run_cnt = 0;
     size_t size;
 
@@ -3798,7 +3793,6 @@ static void __kmp_abt_sched_run(ABT_sched sched) {
 #endif /* ABT_USE_SCHED_SLEEP */
     }
   }
-  free(pools);
 }
 
 static int __kmp_abt_sched_free(ABT_sched sched) {
