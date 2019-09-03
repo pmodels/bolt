@@ -3525,7 +3525,11 @@ extern void __kmp_create_monitor(kmp_info_t *th);
 extern void *__kmp_launch_thread(kmp_info_t *thr);
 #endif
 
+#if !KMP_USE_ABT
 extern void __kmp_create_worker(int gtid, kmp_info_t *th, size_t stack_size);
+#else
+extern void __kmp_abt_create_workers(kmp_team_t *team);
+#endif
 
 #if KMP_OS_WINDOWS
 extern int __kmp_still_running(kmp_info_t *th);

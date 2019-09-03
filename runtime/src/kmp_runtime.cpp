@@ -7567,13 +7567,8 @@ void __kmp_internal_fork(ident_t *id, int gtid, kmp_team_t *team) {
   }
 
   /* Create worker threads here */
-  for (int i = 1; i < team->t.t_nproc; i++) {
-    kmp_info_t *th = team->t.t_threads[i];
-    int th_gtid = __kmp_gtid_from_tid(i, team);
-    __kmp_create_worker(th_gtid, th, __kmp_stksize);
-    KA_TRACE(20, ("__kmp_internal_fork: after __kmp_create_worker: "
-                  "T#%d created T#%d\n", __kmp_get_gtid(), th_gtid));
-  }
+  __kmp_abt_create_workers(team);
+  KA_TRACE(20, ("__kmp_internal_fork: after __kmp_abt_create_workers"));
 #else // KMP_USE_ABT
   /* release the worker threads so they may begin working */
   __kmp_fork_barrier(gtid, 0);

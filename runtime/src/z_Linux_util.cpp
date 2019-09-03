@@ -863,24 +863,14 @@ static void *__kmp_launch_monitor(void *thr) {
 }
 #endif // KMP_USE_MONITOR
 
+#if !KMP_USE_ABT
+
 void __kmp_create_worker(int gtid, kmp_info_t *th, size_t stack_size) {
-#if KMP_USE_ABT
-  ABT_thread handle;
-  ABT_thread_attr thread_attr = ABT_THREAD_ATTR_NULL;
-  ABT_pool tar_pool;
-  int status;
-#else
   pthread_t handle;
   pthread_attr_t thread_attr;
   int status;
-#endif
 
-#if KMP_USE_ABT
-  // [SM] th->th.th_info.ds.ds_gtid is setup in __kmp_allocate_thread
-  KMP_DEBUG_ASSERT(th->th.th_info.ds.ds_gtid == gtid);
-#else
   th->th.th_info.ds.ds_gtid = gtid;
-#endif
 
 #if KMP_STATS_ENABLED
   // sets up worker thread stats
@@ -901,10 +891,6 @@ void __kmp_create_worker(int gtid, kmp_info_t *th, size_t stack_size) {
 
 #endif // KMP_STATS_ENABLED
 
-#if KMP_USE_ABT
-  // uber thread is created in __kmp_abt_create_uber().
-  KMP_DEBUG_ASSERT(!KMP_UBER_GTID(gtid));
-#else
   if (KMP_UBER_GTID(gtid)) {
     KA_TRACE(10, ("__kmp_create_worker: uber thread (%d)\n", gtid));
     th->th.th_info.ds.ds_thread = pthread_self();
@@ -912,49 +898,12 @@ void __kmp_create_worker(int gtid, kmp_info_t *th, size_t stack_size) {
     __kmp_check_stack_overlap(th);
     return;
   }
-#endif
 
   KA_TRACE(10, ("__kmp_create_worker: try to create thread (%d)\n", gtid));
 
   KMP_MB(); /* Flush all pending memory write invalidates.  */
 
-#if KMP_USE_ABT
-
-  // If this new thread is for nested parallel region, the new thread is
-  // added to the shared pool of ES where the caller thread is running on.
-  if (th->th.th_team->t.t_level > 1) {
-    tar_pool = __kmp_abt_get_my_pool(gtid);
-  } else {
-    tar_pool = __kmp_abt_get_pool(gtid);
-  }
-
-  // Check if we can revive this thread.
-  if (th->th.th_info.ds.ds_thread != ABT_THREAD_NULL) {
-    // Revive it.
-    status = ABT_thread_revive(tar_pool, __kmp_abt_launch_worker, (void *)th,
-                               &th->th.th_info.ds.ds_thread);
-    KMP_ASSERT(status == ABT_SUCCESS);
-    return;
-  }
-
-#endif
-
 #ifdef KMP_THREAD_ATTR
-#if KMP_USE_ABT
-
-  status = ABT_thread_attr_create(&thread_attr);
-  if (status != ABT_SUCCESS) {
-    __kmp_msg(kmp_ms_fatal, KMP_MSG(CantInitThreadAttrs), KMP_ERR(status),
-              __kmp_msg_null);
-  }
-  status = ABT_thread_attr_set_stacksize(thread_attr, stack_size);
-  if (status != ABT_SUCCESS) {
-    __kmp_msg(kmp_ms_fatal, KMP_MSG(CantSetWorkerStackSize, stack_size),
-              KMP_ERR(status), KMP_HNT(ChangeWorkerStackSize),
-              __kmp_msg_null);
-  }
-
-#else /* KMP_USE_ABT */
 
   status = pthread_attr_init(&thread_attr);
   if (status != 0) {
@@ -999,19 +948,7 @@ void __kmp_create_worker(int gtid, kmp_info_t *th, size_t stack_size) {
   }
 #endif /* _POSIX_THREAD_ATTR_STACKSIZE */
 
-#endif /* !KMP_USE_ABT */
-
 #endif /* KMP_THREAD_ATTR */
-
-#if KMP_USE_ABT
-
-  KA_TRACE(10, ("__kmp_create_worker: T#%d, nesting level=%d, "
-                "target pool=%p\n", gtid, th->th.th_team->t.t_level, tar_pool));
-  status = ABT_thread_create(tar_pool, __kmp_abt_launch_worker, (void *)th,
-                             thread_attr, &handle);
-  KMP_ASSERT(status == ABT_SUCCESS);
-
-#else /* KMP_USE_ABT */
 
   status =
       pthread_create(&handle, &thread_attr, __kmp_launch_worker, (void *)th);
@@ -1033,15 +970,9 @@ void __kmp_create_worker(int gtid, kmp_info_t *th, size_t stack_size) {
     KMP_SYSFAIL("pthread_create", status);
   }
 
-#endif /* !KMP_USE_ABT */
-
   th->th.th_info.ds.ds_thread = handle;
 
 #ifdef KMP_THREAD_ATTR
-#if KMP_USE_ABT
-  status = ABT_thread_attr_free(&thread_attr);
-  KMP_ASSERT(status == ABT_SUCCESS);
-#else /* KMP_USE_ABT */
   status = pthread_attr_destroy(&thread_attr);
   if (status) {
     kmp_msg_t err_code = KMP_ERR(status);
@@ -1051,7 +982,6 @@ void __kmp_create_worker(int gtid, kmp_info_t *th, size_t stack_size) {
       __kmp_str_free(&err_code.str);
     }
   }
-#endif /* !KMP_USE_ABT */
 #endif /* KMP_THREAD_ATTR */
 
   KMP_MB(); /* Flush all pending memory write invalidates.  */
@@ -1060,7 +990,88 @@ void __kmp_create_worker(int gtid, kmp_info_t *th, size_t stack_size) {
 
 } // __kmp_create_worker
 
-#if KMP_USE_ABT
+#else // KMP_USE_ABT
+
+static inline void __kmp_abt_create_workers_impl(kmp_team_t *team,
+                                                 int start_tid, int end_tid) {
+  // tid must be start_tid.
+
+#ifdef KMP_THREAD_ATTR
+  ABT_thread_attr thread_attr = ABT_THREAD_ATTR_NULL;
+#endif
+
+  // create / revive workers.
+  for (int f = start_tid + 1; f < end_tid; f++) {
+    kmp_info_t *th = team->t.t_threads[f];
+
+    int gtid = __kmp_gtid_from_tid(f, team);
+    // [SM] th->th.th_info.ds.ds_gtid is setup in __kmp_allocate_thread
+    KMP_DEBUG_ASSERT(th->th.th_info.ds.ds_gtid == gtid);
+    // uber thread is created in __kmp_abt_create_uber().
+    KMP_DEBUG_ASSERT(!KMP_UBER_GTID(gtid));
+
+#if KMP_STATS_ENABLED
+    // sets up worker thread stats
+    __kmp_acquire_tas_lock(&__kmp_stats_lock, gtid);
+
+    // th->th.th_stats is used to transfer thread-specific stats-pointer to
+    // __kmp_launch_worker. So when thread is created (goes into
+    // __kmp_launch_worker) it will set its thread local pointer to
+    // th->th.th_stats
+    if (!KMP_UBER_GTID(gtid)) {
+      th->th.th_stats = __kmp_stats_list->push_back(gtid);
+    } else {
+      // For root threads, __kmp_stats_thread_ptr is set in
+      // __kmp_register_root(), so set the th->th.th_stats field to it.
+      th->th.th_stats = __kmp_stats_thread_ptr;
+    }
+    __kmp_release_tas_lock(&__kmp_stats_lock, gtid);
+#endif // KMP_STATS_ENABLED
+
+    ABT_pool target;
+    // If this new thread is for nested parallel region, the new thread is
+    // added to the shared pool of ES where the caller thread is running on.
+    if (th->th.th_team->t.t_level > 1) {
+      target = __kmp_abt_get_my_pool(gtid);
+    } else {
+      target = __kmp_abt_get_pool(gtid);
+    }
+
+    if (th->th.th_info.ds.ds_thread == ABT_THREAD_NULL) {
+      int status;
+      // Create threads.
+#ifdef KMP_THREAD_ATTR
+      if (thread_attr == ABT_THREAD_ATTR_NULL) {
+        status = ABT_thread_attr_create(&thread_attr);
+        KMP_ASSERT(status == ABT_SUCCESS);
+        status = ABT_thread_attr_set_stacksize(thread_attr, __kmp_stksize);
+        KMP_ASSERT(status == ABT_SUCCESS);
+      }
+#endif
+      status = ABT_thread_create(target, __kmp_abt_launch_worker, (void *)th,
+                                 thread_attr, &th->th.th_info.ds.ds_thread);
+      KMP_ASSERT(status == ABT_SUCCESS);
+    } else {
+      // Revive thread.
+      int status = ABT_thread_revive(target, __kmp_abt_launch_worker,
+                                     (void *)th, &th->th.th_info.ds.ds_thread);
+      KMP_ASSERT(status == ABT_SUCCESS);
+    }
+  }
+
+#ifdef KMP_THREAD_ATTR
+  if (thread_attr != ABT_THREAD_ATTR_NULL) {
+      int status = ABT_thread_attr_free(&thread_attr);
+      KMP_ASSERT(status == ABT_SUCCESS);
+  }
+#endif /* KMP_THREAD_ATTR */
+}
+
+void __kmp_abt_create_workers(kmp_team_t *team) {
+  const int num_threads = team->t.t_nproc;
+  // core.
+  __kmp_abt_create_workers_impl(team, 0, num_threads);
+} // __kmp_abt_create_workers
 
 void __kmp_abt_join_worker(kmp_info_t *th) {
   int status;
