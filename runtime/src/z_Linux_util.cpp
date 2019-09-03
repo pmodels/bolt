@@ -3213,7 +3213,6 @@ typedef struct kmp_abt {
   ABT_pool *priv_pool;
   ABT_pool *shared_pool;
   int num_xstreams;
-  int num_pools;
 } kmp_abt_t;
 
 static kmp_abt_t *__kmp_abt = NULL;
@@ -3347,7 +3346,6 @@ static void __kmp_abt_initialize(void) {
   __kmp_abt->shared_pool = (ABT_pool *)__kmp_allocate(num_pools
                                                       * sizeof(ABT_pool));
   __kmp_abt->num_xstreams = num_xstreams;
-  __kmp_abt->num_pools = num_pools;
 
   /* Create pools */
   for (i = 0; i < num_xstreams; i++) {
