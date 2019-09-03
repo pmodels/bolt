@@ -1096,9 +1096,9 @@ void __kmp_init_implicit_task(ident_t *loc_ref, kmp_info_t *this_thr,
   } else {
 #if KMP_USE_ABT
     // [AC] We don't need to check it because we know no tasks are left now
-    task->td_incomplete_child_tasks = 0;
+    task->td_incomplete_child_tasks.store(0, std::memory_order_relaxed);
     // Not used because do not need to deallocate implicit task
-    task->td_allocated_child_tasks = 0;
+    task->td_allocated_child_tasks.store(0, std::memory_order_relaxed);
 #else
     KMP_DEBUG_ASSERT(task->td_incomplete_child_tasks == 0);
     KMP_DEBUG_ASSERT(task->td_allocated_child_tasks == 0);
