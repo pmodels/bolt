@@ -1004,6 +1004,14 @@ static inline void __kmp_abt_create_workers_impl(kmp_team_t *team,
   for (int f = start_tid + 1; f < end_tid; f++) {
     kmp_info_t *th = team->t.t_threads[f];
 
+#if KMP_BARRIER_ICV_PUSH
+    // If we create a thread, the master thread eagerly pushes it.
+    // If it has been run, the slave thread reads it from its master.
+    __kmp_init_implicit_task(team->t.t_ident, th, team, f, FALSE);
+    copy_icvs(&team->t.t_implicit_task_taskdata[f].td_icvs,
+              &team->t.t_master_icvs);
+#endif
+
     int gtid = __kmp_gtid_from_tid(f, team);
     // [SM] th->th.th_info.ds.ds_gtid is setup in __kmp_allocate_thread
     KMP_DEBUG_ASSERT(th->th.th_info.ds.ds_gtid == gtid);
@@ -1069,6 +1077,11 @@ static inline void __kmp_abt_create_workers_impl(kmp_team_t *team,
 
 void __kmp_abt_create_workers(kmp_team_t *team) {
   const int num_threads = team->t.t_nproc;
+#if KMP_BARRIER_ICV_PUSH
+  // set up the master icvs.
+  copy_icvs(&team->t.t_master_icvs,
+            &team->t.t_implicit_task_taskdata[0].td_icvs);
+#endif
   // core.
   __kmp_abt_create_workers_impl(team, 0, num_threads);
 } // __kmp_abt_create_workers
