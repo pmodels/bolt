@@ -3355,10 +3355,6 @@ int __kmp_invoke_microtask(microtask_t pkfn, int gtid, int tid, int argc,
             p_argv[61], p_argv[62], p_argv[63]);
   }
 
-#if OMPT_SUPPORT
-  *exit_frame_ptr = 0;
-#endif
-
   return 1;
 }
 
