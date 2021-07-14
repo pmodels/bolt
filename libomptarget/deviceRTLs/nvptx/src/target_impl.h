@@ -13,18 +13,16 @@
 #define _TARGET_IMPL_H_
 
 #include <assert.h>
-#include <cuda.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "nvptx_interface.h"
 
-#define DEVICE __device__
-#define INLINE __forceinline__ DEVICE
-#define NOINLINE __noinline__ DEVICE
-#define SHARED __shared__
-#define ALIGN(N) __align__(N)
+#define DEVICE
+#define INLINE inline __attribute__((always_inline))
+#define NOINLINE __attribute__((noinline))
+#define ALIGN(N) __attribute__((aligned(N)))
 
 ////////////////////////////////////////////////////////////////////////////////
 // Kernel options
@@ -96,10 +94,6 @@ DEVICE double __kmpc_impl_get_wtime();
 INLINE uint32_t __kmpc_impl_ffs(uint32_t x) { return __builtin_ffs(x); }
 INLINE uint32_t __kmpc_impl_popc(uint32_t x) { return __builtin_popcount(x); }
 
-#ifndef CUDA_VERSION
-#error CUDA_VERSION macro is undefined, something wrong with cuda.
-#endif
-
 DEVICE __kmpc_impl_lanemask_t __kmpc_impl_activemask();
 
 DEVICE int32_t __kmpc_impl_shfl_sync(__kmpc_impl_lanemask_t Mask, int32_t Var,
@@ -130,35 +124,18 @@ DEVICE int GetNumberOfThreadsInBlock();
 DEVICE unsigned GetWarpId();
 DEVICE unsigned GetLaneId();
 
-// Forward declaration of atomics. Although they're template functions, we
-// already have definitions for different types in CUDA internal headers with
-// the right mangled names.
-template <typename T> DEVICE T atomicAdd(T *address, T val);
-template <typename T> DEVICE T atomicInc(T *address, T val);
-template <typename T> DEVICE T atomicMax(T *address, T val);
-template <typename T> DEVICE T atomicExch(T *address, T val);
-template <typename T> DEVICE T atomicCAS(T *address, T compare, T val);
-
 // Atomics
-template <typename T> INLINE T __kmpc_atomic_add(T *address, T val) {
-  return atomicAdd(address, val);
-}
+DEVICE uint32_t __kmpc_atomic_add(uint32_t *, uint32_t);
+DEVICE uint32_t __kmpc_atomic_inc(uint32_t *, uint32_t);
+DEVICE uint32_t __kmpc_atomic_max(uint32_t *, uint32_t);
+DEVICE uint32_t __kmpc_atomic_exchange(uint32_t *, uint32_t);
+DEVICE uint32_t __kmpc_atomic_cas(uint32_t *, uint32_t, uint32_t);
 
-template <typename T> INLINE T __kmpc_atomic_inc(T *address, T val) {
-  return atomicInc(address, val);
-}
-
-template <typename T> INLINE T __kmpc_atomic_max(T *address, T val) {
-  return atomicMax(address, val);
-}
-
-template <typename T> INLINE T __kmpc_atomic_exchange(T *address, T val) {
-  return atomicExch(address, val);
-}
-
-template <typename T> INLINE T __kmpc_atomic_cas(T *address, T compare, T val) {
-  return atomicCAS(address, compare, val);
-}
+static_assert(sizeof(unsigned long long) == sizeof(uint64_t), "");
+DEVICE unsigned long long __kmpc_atomic_exchange(unsigned long long *,
+                                                 unsigned long long);
+DEVICE unsigned long long __kmpc_atomic_add(unsigned long long *,
+                                            unsigned long long);
 
 // Locks
 DEVICE void __kmpc_impl_init_lock(omp_lock_t *lock);

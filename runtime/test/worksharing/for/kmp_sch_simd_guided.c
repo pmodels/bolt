@@ -5,6 +5,7 @@
   value 46 to the OpenMP RTL. Test uses numerous loop parameter combinations.
 */
 #include <stdio.h>
+#include <stdlib.h>
 #include <omp.h>
 #include "omp_testsuite.h"
 
@@ -48,6 +49,9 @@ extern int __kmpc_dispatch_next_8(id*, int, void*, void*, void*, void*);
 // End of definitions copied from OpenMP RTL.
 // ---------------------------------------------------------------------------
 static id loc = {0, 2, 0, 0, ";file;func;0;0;;"};
+// This variable is defined in OpenMP RTL but we can't have it exposed so we
+// need to redefine it here.
+static int __kmp_hidden_helper_threads_num = 8;
 
 // ---------------------------------------------------------------------------
 int run_loop_64(i64 loop_lb, i64 loop_ub, i64 loop_st, int loop_chunk) {
@@ -59,6 +63,9 @@ int run_loop_64(i64 loop_lb, i64 loop_ub, i64 loop_st, int loop_chunk) {
   int rc;
   int tid = omp_get_thread_num();
   int gtid = tid;
+  if (gtid) {
+    gtid += __kmp_hidden_helper_threads_num;
+  }
   int last;
 #if DEBUG
   printf("run_loop_<%d>(lb=%d, ub=%d, st=%d, ch=%d)\n",
@@ -214,6 +221,9 @@ int run_loop_32(int loop_lb, int loop_ub, int loop_st, int loop_chunk) {
   int rc;
   int tid = omp_get_thread_num();
   int gtid = tid;
+  if (gtid) {
+    gtid += __kmp_hidden_helper_threads_num;
+  }
   int last;
 #if DEBUG
   printf("run_loop_<%d>(lb=%d, ub=%d, st=%d, ch=%d)\n",
@@ -402,6 +412,13 @@ int run_32(int num_th)
 // ---------------------------------------------------------------------------
 int main()
 {
+  {
+    const char *env = getenv("LIBOMP_NUM_HIDDEN_HELPER_THREADS");
+    if (env) {
+      __kmp_hidden_helper_threads_num = atoi(env);
+    }
+  }
+
   int n, err = 0;
   for (n = 1; n <= 4; ++ n) {
     err += run_32(n);
